@@ -14,16 +14,19 @@ import {
   type ToolReportBlock,
   type ToolReportCell,
   type ToolReportEntry,
+  type ToolReportEvidence,
   type ToolReportMessage,
   type ToolReportSection,
   type ToolReportTableBlock,
   type ToolReportTreeNode,
+  type ToolStatusVariant,
 } from '../../shared';
 import { createPageAudit } from './pageAudit';
 import {
   PAGE_AUDIT_CATEGORIES,
   PAGE_AUDIT_FORM_FACTORS,
   type PageAuditCategory,
+  type PageAuditFailed,
   type PageAuditFailureKind,
   type PageAuditFormFactor,
   type PageAuditRunner,
@@ -42,7 +45,12 @@ import {
  * looks like, and the application only knows the generic report shape.
  */
 
-export const PAGE_AUDIT_DEFAULT_FORM_FACTOR: PageAuditFormFactor = 'desktop';
+/**
+ * The order the two form factors are measured in when the model names neither:
+ * desktop first, then mobile, sequentially. A named `formFactor` runs only that
+ * one.
+ */
+export const PAGE_AUDIT_RUN_ORDER: readonly PageAuditFormFactor[] = ['desktop', 'mobile'];
 
 export const pageAuditArgsSchema = z
   .object({
@@ -78,34 +86,53 @@ export type PageAuditRequestEnvelope = z.infer<typeof pageAuditRequestSchema>;
  */
 const evidenceSchema = z.array(z.unknown()).readonly();
 
+const auditScoreSchema = z
+  .object({ category: categorySchema, score: z.number().min(0).max(100).nullable() })
+  .strict();
+
+const auditFailureSchema = z
+  .object({
+    category: categorySchema,
+    id: z.string(),
+    title: z.string(),
+    score: z.number().min(0).max(100).nullable(),
+    displayValue: z.string().optional(),
+    evidence: evidenceSchema,
+  })
+  .strict();
+
+/** One form factor's measurement: its scores, findings, and its own problems. */
+const auditRunSchema = z
+  .object({
+    formFactor: z.enum(PAGE_AUDIT_FORM_FACTORS),
+    scores: z.array(auditScoreSchema),
+    failures: z.array(auditFailureSchema),
+    /**
+     * The run could not complete (timeout, sign-in, network). Only present when
+     * the other requested run succeeded; an all-failed call is a tool error.
+     */
+    error: z.string().optional(),
+    /** Lighthouse's own message for a run that completed with a problem. */
+    runtimeError: z.string().optional(),
+  })
+  .strict();
+
 export const pageAuditSuccessSchema = z
   .object({
     ok: z.literal(true),
     operation: z.literal('page_audit'),
     requestId: requestIdSchema,
     url: z.string(),
-    formFactor: z.enum(PAGE_AUDIT_FORM_FACTORS),
-    scores: z.array(
-      z.object({ category: categorySchema, score: z.number().min(0).max(100).nullable() }).strict(),
-    ),
-    failures: z.array(
-      z
-        .object({
-          category: categorySchema,
-          id: z.string(),
-          title: z.string(),
-          score: z.number().min(0).max(100).nullable(),
-          displayValue: z.string().optional(),
-          evidence: evidenceSchema,
-        })
-        .strict(),
-    ),
-    runtimeError: z.string().optional(),
+    runs: z.array(auditRunSchema).min(1).max(2),
+    /** `desktop`, `mobile` or `desktop, mobile` - the billet's Form factor row. */
+    formFactorLabel: z.string(),
     auditedAt: z.number().int().nonnegative(),
   })
   .strict();
 
 export type PageAuditSuccess = z.infer<typeof pageAuditSuccessSchema>;
+export type PageAuditRun = PageAuditSuccess['runs'][number];
+export type PageAuditFailureResult = PageAuditRun['failures'][number];
 
 // ---------------------------------------------------------------------------
 // The model's copy of the report
@@ -115,6 +142,8 @@ export type PageAuditSuccess = z.infer<typeof pageAuditSuccessSchema>;
 function reportCellText(cell: ToolReportCell): string {
   switch (cell.kind) {
     case 'text':
+      return cell.value;
+    case 'status':
       return cell.value;
     case 'selector':
       return uniqueParts([cell.label, cell.selector, cell.snippet, cell.explanation]).join(' — ');
@@ -211,16 +240,45 @@ function renderEvidenceForModel(evidence: readonly ToolReportBlock[]): string {
  * is handed.)
  */
 export function renderPageAuditSuccess(result: PageAuditSuccess): string {
-  const scores = result.scores
+  if (result.runs.length === 1) {
+    const run = result.runs[0];
+    if (run === undefined) return `Audited ${result.url}`;
+    const head = `Audited ${result.url} (${run.formFactor}): ${describeRunScores(run)}. ${String(
+      run.failures.length,
+    )} audit issue(s)`;
+    const runtime =
+      run.runtimeError === undefined ? '' : `\nLighthouse reported: ${run.runtimeError}`;
+    return `${head}${runtime}${describeFailuresForModel(run.failures)}`;
+  }
+  const issues = result.runs.reduce((count, run) => count + run.failures.length, 0);
+  const head = `Audited ${result.url} (${result.formFactorLabel}). ${String(
+    issues,
+  )} audit issue(s)`;
+  const parts = result.runs.map((run) => {
+    if (run.error !== undefined) return `\n${run.formFactor} run failed: ${run.error}`;
+    const runtime =
+      run.runtimeError === undefined ? '' : `; Lighthouse reported: ${run.runtimeError}`;
+    return `\n${run.formFactor}: ${describeRunScores(run)}${runtime}${describeFailuresForModel(
+      run.failures,
+      4,
+    )}`;
+  });
+  return `${head}${parts.join('')}`;
+}
+
+function describeRunScores(run: PageAuditRun): string {
+  return run.scores
     .map((entry) => `${entry.category} ${entry.score === null ? 'n/a' : String(entry.score)}`)
     .join(', ');
-  const head = `Audited ${result.url} (${result.formFactor}): ${scores}. ${String(result.failures.length)} audit issue(s)`;
-  const runtime =
-    result.runtimeError === undefined ? '' : `\nLighthouse reported: ${result.runtimeError}`;
-  if (result.failures.length === 0) return `${head}${runtime}`;
-  const lines = result.failures.map((failure) => {
+}
+
+function describeFailuresForModel(failures: readonly PageAuditFailureResult[], indent = 0): string {
+  if (failures.length === 0) return '';
+  const pad = ' '.repeat(indent);
+  const bodyPad = ' '.repeat(indent + 4);
+  const lines = failures.map((failure) => {
     const title =
-      `- [${failure.category}] ${failure.title} (${failure.id})` +
+      `${pad}- [${failure.category}] ${failure.title} (${failure.id})` +
       `${failure.score === null ? '' : ` score ${String(failure.score)}`}` +
       `${failure.displayValue === undefined ? '' : `: ${failure.displayValue}`}`;
     const evidence = renderEvidenceForModel(
@@ -229,11 +287,11 @@ export function renderPageAuditSuccess(result: PageAuditSuccess): string {
     if (evidence === '') return title;
     const indented = evidence
       .split('\n')
-      .map((line) => (line === '' ? '' : `    ${line}`))
+      .map((line) => (line === '' ? '' : `${bodyPad}${line}`))
       .join('\n');
     return `${title}\n${indented}`;
   });
-  return `${head}${runtime}\n${lines.join('\n')}`;
+  return `\n${lines.join('\n')}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -258,40 +316,273 @@ function statusFor(score: number | null): 'pass' | 'warn' | 'fail' {
   return 'fail';
 }
 
-function summaryTable(scores: PageAuditSuccess['scores']): ToolReportTableBlock {
+/** The status-light colour a score earns (the same thresholds as {@link statusFor}). */
+function scoreVariant(score: number | null): ToolStatusVariant {
+  if (score === null) return 'neutral';
+  if (score >= 90) return 'positive';
+  if (score >= 50) return 'notice';
+  return 'negative';
+}
+
+/** The first value when every entry agrees, else `undefined` (a merged finding shows no single figure). */
+function commonValue<T>(values: readonly (T | undefined)[]): T | undefined {
+  if (values.length === 0) return undefined;
+  const first = values[0];
+  return values.every((value) => value === first) ? first : undefined;
+}
+
+/** The lead table: one score column per run, or the single run's Score + Status. */
+function summaryTable(runs: readonly PageAuditRun[]): ToolReportTableBlock | undefined {
+  if (runs.length === 1) {
+    const run = runs[0];
+    if (run === undefined || run.scores.length === 0) return undefined;
+    return {
+      kind: 'table',
+      columns: [
+        { key: 'category', label: 'Category' },
+        { key: 'score', label: 'Score' },
+        { key: 'status', label: 'Status', kind: 'status' },
+      ],
+      rows: run.scores.map((entry) => [
+        { kind: 'text', value: CATEGORY_LABELS[entry.category] ?? entry.category },
+        { kind: 'text', value: entry.score === null ? 'n/a' : String(entry.score) },
+        { kind: 'text', value: statusFor(entry.score) },
+      ]),
+    };
+  }
+  const categories =
+    runs.find((run) => run.scores.length > 0)?.scores.map((entry) => entry.category) ?? [];
+  if (categories.length === 0) return undefined;
   return {
     kind: 'table',
     columns: [
       { key: 'category', label: 'Category' },
-      { key: 'score', label: 'Score' },
-      { key: 'status', label: 'Status', kind: 'status' },
+      ...runs.map((run) => ({
+        key: run.formFactor,
+        label: run.formFactor === 'desktop' ? 'Desktop' : 'Mobile',
+        kind: 'status' as const,
+      })),
     ],
-    rows: scores.map((entry) => [
-      { kind: 'text', value: CATEGORY_LABELS[entry.category] ?? entry.category },
-      { kind: 'text', value: entry.score === null ? 'n/a' : String(entry.score) },
-      { kind: 'text', value: statusFor(entry.score) },
+    rows: categories.map((category) => [
+      { kind: 'text', value: CATEGORY_LABELS[category] ?? category },
+      ...runs.map((run): ToolReportCell => {
+        const entry = run.scores.find((score) => score.category === category);
+        if (run.error !== undefined || entry === undefined || entry.score === null) {
+          return { kind: 'text', value: '—' };
+        }
+        return { kind: 'status', value: String(entry.score), variant: scoreVariant(entry.score) };
+      }),
+    ]),
+  };
+}
+
+/** One audit's entry while the report is assembled across runs. */
+interface MergedFinding {
+  readonly title: string;
+  readonly failures: PageAuditFailureResult[];
+  readonly runs: RunEvidence[];
+}
+
+/** One run's evidence for a finding, before it is merged with the other device's. */
+interface RunEvidence {
+  readonly formFactor: PageAuditFormFactor;
+  readonly blocks: readonly ToolReportBlock[];
+}
+
+function blocksEqual(a: ToolReportBlock, b: ToolReportBlock): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function rowsEqual(a: readonly ToolReportCell[], b: readonly ToolReportCell[]): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * The row's identity across devices: its first cell - the URL, element or source
+ * every Lighthouse evidence table leads with. A first cell that is itself empty
+ * falls back to the whole row, so a table of bare statistics still merges.
+ */
+function rowKey(row: readonly ToolReportCell[]): string {
+  const first = row[0];
+  if (first === undefined) return JSON.stringify(row);
+  switch (first.kind) {
+    case 'selector':
+      return `selector:${first.selector}`;
+    case 'text':
+      return first.value === '' ? JSON.stringify(row) : `text:${first.value}`;
+    case 'status':
+      return `status:${first.value}`;
+    case 'list':
+      return `list:${JSON.stringify(first.items)}`;
+  }
+}
+
+function sameTableShape(a: ToolReportTableBlock, b: ToolReportTableBlock): boolean {
+  return a.title === b.title && JSON.stringify(a.columns) === JSON.stringify(b.columns);
+}
+
+/**
+ * Whether a row carries a sub-items list. Such a row is rich enough that
+ * collapsing it into one both-devices row hides which device reported the
+ * detail, so its device rows are kept separate even when they are identical.
+ */
+function hasSubItems(row: readonly ToolReportCell[]): boolean {
+  return row.some((cell) => cell.kind === 'list');
+}
+
+/**
+ * One table for both devices. An identical row is shown once, marked both; a
+ * row the devices disagree on (same key, different values) is kept twice, one
+ * per device, so neither value is lost; a row only one device reported is
+ * marked that device. A row with a sub-items list keeps one row per device.
+ */
+function mergeTables(
+  a: ToolReportTableBlock,
+  b: ToolReportTableBlock,
+  aFormFactor: PageAuditFormFactor,
+  bFormFactor: PageAuditFormFactor,
+): ToolReportTableBlock {
+  const rows: (readonly ToolReportCell[])[] = [];
+  const rowFormFactors: (readonly PageAuditFormFactor[])[] = [];
+  const remaining = [...b.rows];
+  for (const row of a.rows) {
+    const key = rowKey(row);
+    const exact = remaining.findIndex(
+      (candidate) => rowKey(candidate) === key && rowsEqual(candidate, row),
+    );
+    if (exact !== -1) {
+      const [same] = remaining.splice(exact, 1);
+      if (same !== undefined && hasSubItems(row)) {
+        rows.push(row, same);
+        rowFormFactors.push([aFormFactor], [bFormFactor]);
+      } else {
+        rows.push(row);
+        rowFormFactors.push([aFormFactor, bFormFactor]);
+      }
+      continue;
+    }
+    const sameKey = remaining.findIndex((candidate) => rowKey(candidate) === key);
+    const other = sameKey === -1 ? undefined : remaining.splice(sameKey, 1)[0];
+    if (other !== undefined) {
+      rows.push(row, other);
+      rowFormFactors.push([aFormFactor], [bFormFactor]);
+      continue;
+    }
+    rows.push(row);
+    rowFormFactors.push([aFormFactor]);
+  }
+  for (const row of remaining) {
+    rows.push(row);
+    rowFormFactors.push([bFormFactor]);
+  }
+  return { ...a, rows, rowFormFactors };
+}
+
+/** One evidence list, merged across the devices that reported the finding. */
+function mergeEvidence(runs: readonly RunEvidence[]): ToolReportEvidence[] {
+  const [first, second] = runs;
+  if (first === undefined) return [];
+  if (second === undefined) {
+    return first.blocks.map((block) => ({ formFactors: [first.formFactor], block }));
+  }
+  const merged: ToolReportEvidence[] = [];
+  const length = Math.max(first.blocks.length, second.blocks.length);
+  for (let index = 0; index < length; index += 1) {
+    const a = first.blocks[index];
+    const b = second.blocks[index];
+    if (a === undefined && b !== undefined) {
+      merged.push({ formFactors: [second.formFactor], block: b });
+      continue;
+    }
+    if (b === undefined && a !== undefined) {
+      merged.push({ formFactors: [first.formFactor], block: a });
+      continue;
+    }
+    if (a === undefined || b === undefined) continue;
+    if (a.kind === 'table' && b.kind === 'table' && sameTableShape(a, b)) {
+      merged.push({
+        formFactors: [first.formFactor, second.formFactor],
+        block: mergeTables(a, b, first.formFactor, second.formFactor),
+      });
+      continue;
+    }
+    if (a.kind === b.kind && blocksEqual(a, b)) {
+      merged.push({ formFactors: [first.formFactor, second.formFactor], block: a });
+      continue;
+    }
+    merged.push({ formFactors: [first.formFactor], block: a });
+    merged.push({ formFactors: [second.formFactor], block: b });
+  }
+  return merged;
+}
+
+/**
+ * A checklist is really a two-column `Item | Result` table (Lighthouse's
+ * document-latency insight), so it is rendered and merged as one: the device
+ * mark sits per item, and an observed value that differs between devices keeps
+ * its own row instead of duplicating the whole list.
+ */
+function checklistAsTable(block: ToolReportBlock): ToolReportBlock {
+  if (block.kind !== 'checklist') return block;
+  return {
+    kind: 'table',
+    columns: [
+      { key: 'item', label: 'Item' },
+      { key: 'result', label: 'Result' },
+    ],
+    rows: block.items.map((item) => [
+      { kind: 'text', value: item.label },
+      { kind: 'text', value: item.value },
     ]),
   };
 }
 
 /** The structured report message the transcript paints under the settled billet. */
 export function buildPageAuditReport(result: PageAuditSuccess): ToolReportMessage {
+  const measured = result.runs.filter((run) => run.error === undefined);
   const sections: ToolReportSection[] = [];
   for (const category of CATEGORY_ORDER) {
-    const entries: ToolReportEntry[] = result.failures
-      .filter((failure) => failure.category === category)
-      .map((failure) => ({
-        id: `${failure.category}:${failure.id}`,
-        title: failure.title,
-        ...(failure.displayValue === undefined ? {} : { displayValue: failure.displayValue }),
-        ...(failure.score === null ? {} : { score: failure.score }),
-        blocks: failure.evidence as unknown as readonly ToolReportBlock[],
-      }));
-    if (entries.length === 0) continue;
+    // Merge the same audit across runs by its id, then merge its evidence.
+    const merged = new Map<string, MergedFinding>();
+    for (const run of measured) {
+      for (const failure of run.failures) {
+        if (failure.category !== category) continue;
+        const evidence: RunEvidence = {
+          formFactor: run.formFactor,
+          blocks: (failure.evidence as unknown as readonly ToolReportBlock[]).map(checklistAsTable),
+        };
+        const existing = merged.get(failure.id);
+        if (existing === undefined) {
+          merged.set(failure.id, { title: failure.title, failures: [failure], runs: [evidence] });
+        } else {
+          existing.failures.push(failure);
+          existing.runs.push(evidence);
+        }
+      }
+    }
+    if (merged.size === 0) continue;
+    const entries: ToolReportEntry[] = [...merged.entries()].map(([id, finding]) => {
+      const displayValue = commonValue(finding.failures.map((failure) => failure.displayValue));
+      const score = commonValue(
+        finding.failures.map((failure) => (failure.score === null ? undefined : failure.score)),
+      );
+      return {
+        id: `${category}:${id}`,
+        title: finding.title,
+        ...(displayValue === undefined ? {} : { displayValue }),
+        ...(score === undefined ? {} : { score }),
+        evidence: mergeEvidence(finding.runs),
+      };
+    });
     sections.push({ title: CATEGORY_LABELS[category] ?? category, entries });
   }
+  const failedNotes = result.runs
+    .filter((run) => run.error !== undefined)
+    .map((run) => `The ${run.formFactor} run failed: ${run.error ?? ''}`);
   return {
-    summary: result.scores.length === 0 ? undefined : summaryTable(result.scores),
+    summary: summaryTable(result.runs),
+    ...(failedNotes.length === 0 ? {} : { note: failedNotes.join(' ') }),
+    url: result.url,
     sections,
   };
 }
@@ -359,23 +650,75 @@ export function createPageAuditExecutorFactory(run: PageAuditRunner): AddonToolF
         execute: async (
           envelope: PageAuditRequestEnvelope,
         ): Promise<ToolOutcome<PageAuditSuccess>> => {
-          toolHost.reportToolProgress?.(context.toolCallId, 'Auditing the page');
-          const outcome = await run(
-            {
-              url: envelope.args.url,
-              categories: envelope.args.categories ?? PAGE_AUDIT_CATEGORIES,
-              formFactor: envelope.args.formFactor ?? PAGE_AUDIT_DEFAULT_FORM_FACTOR,
-            },
-            context.signal,
-            (stage) => toolHost.reportToolProgress?.(context.toolCallId, stage),
-          );
-          if (outcome.kind !== 'report') {
-            const mapping = ERROR_MAPPINGS[outcome.kind];
+          // Absent form factor = both, in a stable order; a named one runs alone.
+          const requested =
+            envelope.args.formFactor === undefined
+              ? PAGE_AUDIT_RUN_ORDER
+              : [envelope.args.formFactor];
+          const categories = envelope.args.categories ?? PAGE_AUDIT_CATEGORIES;
+          const runs: PageAuditRun[] = [];
+          const failures: PageAuditFailed[] = [];
+          let auditedUrl = '';
+          for (const formFactor of requested) {
+            toolHost.reportToolProgress?.(context.toolCallId, `Analyzing ${formFactor}`);
+            const outcome = await run(
+              { url: envelope.args.url, categories, formFactor },
+              context.signal,
+              (stage) => toolHost.reportToolProgress?.(context.toolCallId, stage),
+            );
+            if (outcome.kind === 'report') {
+              auditedUrl = outcome.url;
+              runs.push({
+                formFactor: outcome.formFactor,
+                scores: outcome.scores.map((entry) => ({
+                  category: entry.category,
+                  score: toPercent(entry.score),
+                })),
+                failures: outcome.failures.map((failure) => ({
+                  category: failure.category,
+                  id: failure.id,
+                  title: failure.title,
+                  score: toPercent(failure.score),
+                  ...(failure.displayValue === undefined
+                    ? {}
+                    : { displayValue: failure.displayValue }),
+                  evidence: failure.evidence,
+                })),
+                ...(outcome.runtimeError === undefined
+                  ? {}
+                  : { runtimeError: outcome.runtimeError }),
+              });
+            } else {
+              // A failed run is a note on the report when the other succeeded;
+              // when both fail the whole call is the error below.
+              failures.push(outcome);
+              runs.push({
+                formFactor,
+                scores: [],
+                failures: [],
+                error: ERROR_MESSAGES[outcome.kind],
+              });
+            }
+          }
+          if (runs.every((runResult) => runResult.error !== undefined)) {
+            const failure = failures[0];
+            if (failure === undefined) {
+              return {
+                ok: false,
+                error: createToolError(
+                  'NETWORK_ERROR',
+                  'The page audit failed',
+                  newRequestId(toolHost.idGenerator),
+                  { retryable: true, requiredAction: 'none' },
+                ),
+              };
+            }
+            const mapping = ERROR_MAPPINGS[failure.kind];
             return {
               ok: false,
               error: createToolError(
                 mapping.code,
-                ERROR_MESSAGES[outcome.kind],
+                ERROR_MESSAGES[failure.kind],
                 newRequestId(toolHost.idGenerator),
                 { retryable: mapping.retryable, requiredAction: mapping.requiredAction },
               ),
@@ -385,21 +728,9 @@ export function createPageAuditExecutorFactory(run: PageAuditRunner): AddonToolF
             ok: true,
             operation: 'page_audit',
             requestId: envelope.requestId,
-            url: outcome.url,
-            formFactor: outcome.formFactor,
-            scores: outcome.scores.map((entry) => ({
-              category: entry.category,
-              score: toPercent(entry.score),
-            })),
-            failures: outcome.failures.map((failure) => ({
-              category: failure.category,
-              id: failure.id,
-              title: failure.title,
-              score: toPercent(failure.score),
-              ...(failure.displayValue === undefined ? {} : { displayValue: failure.displayValue }),
-              evidence: failure.evidence,
-            })),
-            ...(outcome.runtimeError === undefined ? {} : { runtimeError: outcome.runtimeError }),
+            url: auditedUrl,
+            runs,
+            formFactorLabel: runs.map((runResult) => runResult.formFactor).join(', '),
             auditedAt: toolHost.clock(),
           };
         },

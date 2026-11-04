@@ -6,7 +6,12 @@ import type {
 } from '../../../shared';
 import { el } from '../lib/dom';
 import { statusLightVariant } from './tableCells';
-import { applyReportState, renderReportMessage, reportSignature } from './reportView';
+import {
+  applyReportState,
+  renderReportMessage,
+  reportSignature,
+  REPORT_URL_ATTR,
+} from './reportView';
 import {
   EMPTY_AEM_LINKIFY_STATE,
   EMPTY_LINK_CONTEXT,
@@ -119,11 +124,13 @@ export interface TranscriptViewOptions {
    */
   readonly onExportTable?: (data: TableExportData) => void;
   /**
-   * Invoked with the CSS selector of a report's failing element when the reader
-   * activates its pseudo-link, so the host scrolls the browser pane to it and
-   * highlights it. Absent (a unit test) means the link is inert.
+   * Invoked with the CSS selector of a report's failing element (and the page
+   * that report was about, when it knows one) when the reader activates its
+   * pseudo-link, so the host reopens that page if needed, scrolls the browser
+   * pane to the element and highlights it. Absent (a unit test) means the link
+   * is inert.
    */
-  readonly onHighlightElement?: (selector: string) => void;
+  readonly onHighlightElement?: (selector: string, url: string | undefined) => void;
 }
 
 /** Stable identity for an item's cached DOM node - see `createTranscriptView`'s doc comment for why this matters. */
@@ -978,7 +985,9 @@ export function createTranscriptView(
     if (selectorLink !== null) {
       event.preventDefault();
       const selector = selectorLink.getAttribute('data-daisy-selector');
-      if (selector !== null && selector !== '') options.onHighlightElement?.(selector);
+      const reportUrl =
+        selectorLink.closest('.chat-report-message')?.getAttribute(REPORT_URL_ATTR) ?? undefined;
+      if (selector !== null && selector !== '') options.onHighlightElement?.(selector, reportUrl);
       return;
     }
     const anchor =
@@ -1773,6 +1782,11 @@ export function createTranscriptView(
               reportTableExports.set(table.shell, table.data);
             }
             renderedReports.set(reportShell, signature);
+          }
+          if (reportMessage.url === undefined) {
+            reportShell.removeAttribute(REPORT_URL_ATTR);
+          } else {
+            reportShell.setAttribute(REPORT_URL_ATTR, reportMessage.url);
           }
           applyReportStateTo(reportShell);
           settledNodes.push(reportShell);

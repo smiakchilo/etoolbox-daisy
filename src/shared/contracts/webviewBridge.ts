@@ -55,6 +55,12 @@ export const WEBVIEW_BRIDGE_HIGHLIGHT_REPLY_CHANNEL = 'webview-bridge:highlight-
 export const webviewBridgeHighlightCommandSchema = z.object({
   requestId: z.string().min(1),
   selector: z.string().min(1).max(500),
+  /**
+   * The page the selector belongs to, when the report knew it. The preload
+   * refuses a document that is not that page, so a late command can never
+   * decorate the wrong document.
+   */
+  url: z.string().min(1).max(2000).optional(),
 });
 export type WebviewBridgeHighlightCommand = z.infer<typeof webviewBridgeHighlightCommandSchema>;
 

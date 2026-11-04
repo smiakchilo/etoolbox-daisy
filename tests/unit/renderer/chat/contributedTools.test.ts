@@ -68,7 +68,19 @@ const REPORT: ToolReportMessage = {
     columns: [{ key: 'name', label: 'Name' }],
     rows: [[{ kind: 'text', value: 'one' }]],
   },
-  sections: [{ title: 'Section', entries: [{ id: 'a:b', title: 'Entry', blocks: [] }] }],
+  url: 'https://author.example/content/a.html',
+  sections: [
+    {
+      title: 'Section',
+      entries: [
+        {
+          id: 'a:b',
+          title: 'Entry',
+          evidence: [{ formFactors: ['desktop'], block: { kind: 'text', value: 'x' } }],
+        },
+      ],
+    },
+  ],
 };
 
 describe('a contributed billet', () => {
@@ -162,6 +174,17 @@ describe('a contributed tool in the registry', () => {
     const data = { ok: true, [TOOL_REPORT_PAYLOAD_KEY]: REPORT } as unknown as JsonValue;
 
     expect(registry.readReportMessage('example_report', {}, data)).toEqual(REPORT);
+  });
+
+  it('carries the page the report is about, and omits an unusable one', () => {
+    const registry = createToolRendererRegistry({}, contributeToolRenderers(ADDONS));
+    const data = { ok: true, [TOOL_REPORT_PAYLOAD_KEY]: REPORT } as unknown as JsonValue;
+
+    expect(registry.readReportMessage('example_report', {}, data)?.url).toBe(
+      'https://author.example/content/a.html',
+    );
+    expect(readContributedReport({ report: { sections: [], url: 3 } })?.url).toBeUndefined();
+    expect(readContributedReport({ report: { sections: [], url: '' } })?.url).toBeUndefined();
   });
 
   it('paints nothing for a result without a report', () => {

@@ -123,34 +123,47 @@ function seedReportJournal(home: string, options: SeedOptions = {}): string {
     ok: true,
     operation: 'page_audit',
     url: 'https://author.example/page.html',
-    formFactor: 'desktop',
-    scores: [{ category: 'performance', score: 70 }],
-    failures,
+    runs: [
+      { formFactor: 'desktop', scores: [{ category: 'performance', score: 70 }], failures },
+      {
+        formFactor: 'mobile',
+        scores: [{ category: 'performance', score: 55 }],
+        failures: failures.slice(0, 1),
+      },
+    ],
+    formFactorLabel: 'desktop, mobile',
     report: {
       summary: {
         kind: 'table',
         columns: [
           { key: 'category', label: 'Category' },
-          { key: 'score', label: 'Score' },
-          { key: 'status', label: 'Status', kind: 'status' },
+          { key: 'desktop', label: 'Desktop', kind: 'status' },
+          { key: 'mobile', label: 'Mobile', kind: 'status' },
         ],
         rows: [
           [
             { kind: 'text', value: 'Performance' },
-            { kind: 'text', value: '70' },
-            { kind: 'text', value: 'warn' },
+            { kind: 'status', value: '70', variant: 'notice' },
+            { kind: 'status', value: '55', variant: 'notice' },
           ],
         ],
       },
+      url: 'https://author.example/page.html',
       sections: [
         {
           title: 'Performance',
-          entries: failures.map((failure) => ({
+          entries: failures.map((failure, index) => ({
             id: `${failure.category}:${failure.id}`,
             title: failure.title,
             score: failure.score,
             ...('displayValue' in failure ? { displayValue: failure.displayValue } : {}),
-            blocks: failure.evidence,
+            evidence: failure.evidence.map((block) => ({
+              formFactors: index === 0 ? ['desktop', 'mobile'] : ['desktop'],
+              block:
+                index === 0 && 'rows' in block
+                  ? { ...block, rowFormFactors: firstRows.map(() => ['desktop', 'mobile']) }
+                  : block,
+            })),
           })),
         },
       ],
@@ -246,6 +259,15 @@ test('the audit report collapses and expands, indents its evidence, and keeps li
     expect(await display(page, '.chat-report-entry__body')).toBe('none');
     await page.locator('button[data-report-entry]').first().click();
     expect(await display(page, '.chat-report-entry__body')).not.toBe('none');
+
+    // The first entry was measured on both devices: one merged table, every row
+    // marked with both device icons in the Device column.
+    await expect(
+      page.locator('.chat-report-entry__body:not([hidden]) .chat-report-table__device').first(),
+    ).toBeVisible();
+    await expect(
+      page.locator('.chat-report-entry__body:not([hidden]) sp-table-head-cell').nth(1),
+    ).toHaveText('Device');
 
     // The evidence content starts under the heading's text (past the chevron),
     // not under the chevron.

@@ -941,6 +941,8 @@ if (smokeTest) {
       paneSession: viewSession.session,
       currentUrl: () => browserController.currentDocumentUrl(),
       isConfiguredOrigin: (origin) => configuredHosts().some((host) => host.origin === origin),
+      hostType: (origin) =>
+        loadSettingsSync(appPaths.settings).hosts.find((host) => host.origin === origin)?.type,
       logger,
     });
     // The tools the add-ons declare: each one is a proxy that forwards the model's

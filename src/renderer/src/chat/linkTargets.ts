@@ -469,6 +469,19 @@ function trimTrailingSentencePunctuation(path: string): string {
   return path.slice(0, end);
 }
 
+/**
+ * A source location an audit appends to a URL or path - `:line:column` after a
+ * file extension (e.g. `abcdef.js:1:3458`). It is not part of the resource, so it
+ * must not enter the link's href (which would 404). The caller shortens the match
+ * to the target and leaves the suffix in the text, so the reader still sees it.
+ * A single `:number` is deliberately not stripped - it is indistinguishable from
+ * a port (`https://host:4502`).
+ */
+function stripSourceLocation(value: string): string {
+  const match = /^(.*\.[A-Za-z0-9]+)(:\d+:\d+)$/.exec(value);
+  return match === null ? value : match[1]!;
+}
+
 function pushText(segments: MessageSegment[], value: string): void {
   if (value.length === 0) return;
   const previous = segments[segments.length - 1];
@@ -528,7 +541,7 @@ export function splitAemPathLinks(
     if (raw.startsWith('/')) {
       // A full AEM path: needs the active host, and becomes the carry-over.
       if (context.activeOrigin === undefined) continue;
-      const path = trimTrailingSentencePunctuation(raw);
+      const path = stripSourceLocation(trimTrailingSentencePunctuation(raw));
       if (path.length <= 1) continue;
       value = path;
       resolved = classifyAemPath(context.activeOrigin, path);
@@ -537,7 +550,7 @@ export function splitAemPathLinks(
     } else if (raw.startsWith(PAGE_RELATIVE_PREFIX)) {
       // A page-relative node against the last full path (and the active host).
       if (context.activeOrigin === undefined || lastFullPath === undefined) continue;
-      const path = trimTrailingSentencePunctuation(raw);
+      const path = stripSourceLocation(trimTrailingSentencePunctuation(raw));
       const actions = resolvePartialPathActions(lastFullPath, path, context.activeOrigin);
       if (actions.length === 0) continue;
       value = path;
@@ -545,8 +558,9 @@ export function splitAemPathLinks(
       navigable = false;
     } else {
       // An absolute http(s) URL: a configured host opens in the pane, any other
-      // origin in the system browser. Never the carry-over.
-      const url = trimTrailingSentencePunctuation(raw);
+      // origin in the system browser. Never the carry-over. A trailing
+      // `:line:column` is a source location, not part of the resource.
+      const url = stripSourceLocation(trimTrailingSentencePunctuation(raw));
       const absolute = resolveAbsoluteLink(url, context);
       if (absolute === undefined) continue;
       value = url;

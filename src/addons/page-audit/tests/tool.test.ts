@@ -11,7 +11,7 @@ import {
   turnIdSchema,
 } from '../../../shared';
 import {
-  PAGE_AUDIT_DEFAULT_FORM_FACTOR,
+  PAGE_AUDIT_RUN_ORDER,
   buildPageAuditReport,
   createPageAuditExecutorFactory,
   pageAuditArgsSchema,
@@ -21,7 +21,6 @@ import {
 import {
   PAGE_AUDIT_CATEGORIES,
   type PageAuditFailureKind,
-  type PageAuditFormFactor,
   type PageAuditOutcome,
   type PageAuditReport,
   type PageAuditRequest,
@@ -73,7 +72,13 @@ const REPORT: PageAuditReport = {
 };
 
 function runnerReturning(outcome: PageAuditOutcome) {
-  return vi.fn<PageAuditRunner>(() => Promise.resolve(outcome));
+  // The real runner reports the form factor it measured; echo the request so a
+  // dual call's two runs are distinguishable.
+  return vi.fn<PageAuditRunner>((request) =>
+    Promise.resolve(
+      outcome.kind === 'report' ? { ...outcome, formFactor: request.formFactor } : outcome,
+    ),
+  );
 }
 
 /**
@@ -151,23 +156,36 @@ describe('pageAuditArgsSchema', () => {
 });
 
 describe('the audit executor', () => {
-  it('audits every category in the default form factor when nothing is named', async () => {
+  it('measures both form factors, desktop then mobile, when nothing is named', async () => {
     const audit = runnerReturning(REPORT);
 
     await execute(audit, {});
 
-    expect(audit).toHaveBeenCalledWith(
+    expect(audit).toHaveBeenCalledTimes(2);
+    expect(audit).toHaveBeenNthCalledWith(
+      1,
       {
         url: undefined,
         categories: PAGE_AUDIT_CATEGORIES,
-        formFactor: PAGE_AUDIT_DEFAULT_FORM_FACTOR,
+        formFactor: 'desktop',
       } satisfies PageAuditRequest,
       undefined,
       expect.any(Function),
     );
+    expect(audit).toHaveBeenNthCalledWith(
+      2,
+      {
+        url: undefined,
+        categories: PAGE_AUDIT_CATEGORIES,
+        formFactor: 'mobile',
+      } satisfies PageAuditRequest,
+      undefined,
+      expect.any(Function),
+    );
+    expect(PAGE_AUDIT_RUN_ORDER).toEqual(['desktop', 'mobile']);
   });
 
-  it('passes the named options and the abort signal through', async () => {
+  it('runs only the named form factor', async () => {
     const audit = runnerReturning(REPORT);
     const controller = new AbortController();
     const executor = createPageAuditExecutorFactory(audit)(toolHost(), {
@@ -181,6 +199,7 @@ describe('the audit executor', () => {
       { toolCallId: callContext.toolCallId, signal: controller.signal },
     );
 
+    expect(audit).toHaveBeenCalledTimes(1);
     expect(audit).toHaveBeenCalledWith(
       { url: '/content/x.html', categories: ['seo'], formFactor: 'desktop' },
       controller.signal,
@@ -193,24 +212,38 @@ describe('the audit executor', () => {
 
     expect(result.value).toMatchObject({
       auditedAt: 42,
-      scores: [
-        { category: 'performance', score: 46 },
-        { category: 'seo', score: null },
+      formFactorLabel: 'desktop, mobile',
+      runs: [
+        {
+          formFactor: 'desktop',
+          scores: [
+            { category: 'performance', score: 46 },
+            { category: 'seo', score: null },
+          ],
+        },
+        {
+          formFactor: 'mobile',
+          scores: [
+            { category: 'performance', score: 46 },
+            { category: 'seo', score: null },
+          ],
+        },
       ],
     });
-    expect(result.value?.failures[1]).toMatchObject({ score: 50, displayValue: '4.2 s' });
-    expect(result.value?.failures[1]?.evidence).toHaveLength(1);
-    expect('displayValue' in (result.value?.failures[0] ?? {})).toBe(false);
-    expect('runtimeError' in (result.value ?? {})).toBe(false);
+    const desktop = result.value?.runs[0];
+    expect(desktop?.failures[1]).toMatchObject({ score: 50, displayValue: '4.2 s' });
+    expect(desktop?.failures[1]?.evidence).toHaveLength(1);
+    expect('displayValue' in (desktop?.failures[0] ?? {})).toBe(false);
+    expect('runtimeError' in (desktop ?? {})).toBe(false);
   });
 
-  it('carries the run’s own runtime error when there is one', async () => {
+  it('carries a run’s own runtime error when there is one', async () => {
     const result = await execute(
       runnerReturning({ ...REPORT, runtimeError: 'The page timed out' }),
       {},
     );
 
-    expect(result.value).toMatchObject({ runtimeError: 'The page timed out' });
+    expect(result.value?.runs[0]).toMatchObject({ runtimeError: 'The page timed out' });
   });
 
   it.each([
@@ -254,7 +287,7 @@ describe('the audit executor', () => {
   it('keeps the evidence in the result, so the model can discuss it', async () => {
     const result = await execute(runnerReturning(REPORT), {});
 
-    expect(result.value?.failures).toMatchObject([
+    expect(result.value?.runs[0]?.failures).toMatchObject([
       { evidence: [{ kind: 'text', value: 'The page has no meta description.' }] },
       {
         evidence: [
@@ -303,24 +336,29 @@ describe('buildPageAuditReport', () => {
     operation: 'page_audit',
     requestId: requestIdSchema.parse('req-1'),
     url: 'https://author.example/page.html',
-    formFactor: 'mobile',
-    scores: [
-      { category: 'performance', score: 46 },
-      { category: 'seo', score: null },
-    ],
-    failures: [
+    runs: [
       {
-        category: 'seo',
-        id: 'meta',
-        title: 'No meta',
-        score: 0,
-        evidence: [{ kind: 'text', value: 'x' }],
+        formFactor: 'mobile',
+        scores: [
+          { category: 'performance', score: 46 },
+          { category: 'seo', score: null },
+        ],
+        failures: [
+          {
+            category: 'seo',
+            id: 'meta',
+            title: 'No meta',
+            score: 0,
+            evidence: [{ kind: 'text', value: 'x' }],
+          },
+        ],
       },
     ],
+    formFactorLabel: 'mobile',
     auditedAt: 1,
   };
 
-  it('leads with the score table and statuses each score', () => {
+  it('leads with the score table and statuses each score for a single run', () => {
     const report = buildPageAuditReport(success);
 
     expect(report.summary?.rows).toEqual([
@@ -343,27 +381,293 @@ describe('buildPageAuditReport', () => {
     expect(report.sections).toHaveLength(1);
     expect(report.sections[0]).toMatchObject({ title: 'SEO' });
     expect(report.sections[0]?.entries[0]).toMatchObject({ id: 'seo:meta', title: 'No meta' });
-    expect(report.sections[0]?.entries[0]?.blocks).toEqual([{ kind: 'text', value: 'x' }]);
+    expect(report.sections[0]?.entries[0]?.evidence).toEqual([
+      { formFactors: ['mobile'], block: { kind: 'text', value: 'x' } },
+    ]);
+  });
+
+  it('gives the score table a column per device for a dual run', () => {
+    const report = buildPageAuditReport({
+      ...success,
+      formFactorLabel: 'desktop, mobile',
+      runs: [
+        {
+          formFactor: 'desktop',
+          scores: [
+            { category: 'performance', score: 70 },
+            { category: 'seo', score: 100 },
+          ],
+          failures: [],
+        },
+        {
+          formFactor: 'mobile',
+          scores: [
+            { category: 'performance', score: 40 },
+            { category: 'seo', score: 100 },
+          ],
+          failures: [],
+        },
+      ],
+    });
+
+    expect(report.summary?.columns.map((column) => column.label)).toEqual([
+      'Category',
+      'Desktop',
+      'Mobile',
+    ]);
+    expect(report.summary?.rows[0]).toEqual([
+      { kind: 'text', value: 'Performance' },
+      { kind: 'status', value: '70', variant: 'notice' },
+      { kind: 'status', value: '40', variant: 'negative' },
+    ]);
+  });
+
+  /** One audit reported by both devices, with each run's evidence. */
+  function dualReport(desktopEvidence: readonly unknown[], mobileEvidence: readonly unknown[]) {
+    const failure = (evidence: readonly unknown[]) => ({
+      category: 'seo' as const,
+      id: 'meta',
+      title: 'No meta',
+      score: 0,
+      evidence,
+    });
+    return buildPageAuditReport({
+      ...success,
+      formFactorLabel: 'desktop, mobile',
+      runs: [
+        {
+          formFactor: 'desktop',
+          scores: [{ category: 'seo', score: 80 }],
+          failures: [failure(desktopEvidence)],
+        },
+        {
+          formFactor: 'mobile',
+          scores: [{ category: 'seo', score: 60 }],
+          failures: [failure(mobileEvidence)],
+        },
+      ],
+    });
+  }
+
+  it('collapses word-for-word prose into one block marked both devices', () => {
+    const prose = { kind: 'text', value: 'Same explanation.' };
+    const entry = dualReport([prose], [prose]).sections[0]?.entries[0];
+
+    expect(entry?.evidence).toEqual([{ formFactors: ['desktop', 'mobile'], block: prose }]);
+  });
+
+  it('keeps prose the devices disagree on once per device', () => {
+    const entry = dualReport(
+      [{ kind: 'text', value: 'Desktop explanation.' }],
+      [{ kind: 'text', value: 'Mobile explanation.' }],
+    ).sections[0]?.entries[0];
+
+    expect(entry?.evidence).toEqual([
+      { formFactors: ['desktop'], block: { kind: 'text', value: 'Desktop explanation.' } },
+      { formFactors: ['mobile'], block: { kind: 'text', value: 'Mobile explanation.' } },
+    ]);
+  });
+
+  it('renders a checklist as an Item/Result table and merges its items', () => {
+    const checklist = (observed: string) => ({
+      kind: 'checklist' as const,
+      items: [
+        { label: 'Avoids redirects', value: 'yes' },
+        { label: `Server responded slowly (observed ${observed} ms)`, value: 'no' },
+        { label: 'No compression applied', value: 'no' },
+      ],
+    });
+    const entry = dualReport([checklist('657')], [checklist('816')]).sections[0]?.entries[0];
+    const block = entry?.evidence[0]?.block;
+
+    expect(block?.kind).toBe('table');
+    if (block?.kind !== 'table') return;
+    expect(block.columns).toEqual([
+      { key: 'item', label: 'Item' },
+      { key: 'result', label: 'Result' },
+    ]);
+    expect(block.rows).toEqual([
+      [
+        { kind: 'text', value: 'Avoids redirects' },
+        { kind: 'text', value: 'yes' },
+      ],
+      [
+        { kind: 'text', value: 'Server responded slowly (observed 657 ms)' },
+        { kind: 'text', value: 'no' },
+      ],
+      [
+        { kind: 'text', value: 'No compression applied' },
+        { kind: 'text', value: 'no' },
+      ],
+      [
+        { kind: 'text', value: 'Server responded slowly (observed 816 ms)' },
+        { kind: 'text', value: 'no' },
+      ],
+    ]);
+    expect(block.rowFormFactors).toEqual([
+      ['desktop', 'mobile'],
+      ['desktop'],
+      ['desktop', 'mobile'],
+      ['mobile'],
+    ]);
+  });
+
+  it('collapses an identical table and marks every row both devices', () => {
+    const table = {
+      kind: 'table' as const,
+      columns: [{ key: 'url', label: 'URL' }],
+      rows: [[{ kind: 'text' as const, value: 'https://a.example/a.js' }]],
+    };
+    const entry = dualReport([table], [{ ...table }]).sections[0]?.entries[0];
+
+    expect(entry?.evidence).toEqual([
+      {
+        formFactors: ['desktop', 'mobile'],
+        block: { ...table, rowFormFactors: [['desktop', 'mobile']] },
+      },
+    ]);
+  });
+
+  it('keeps a device row per device when the row carries sub-items', () => {
+    const subItems = {
+      kind: 'list' as const,
+      items: [{ kind: 'text' as const, value: 'https://a.example/a.js' }],
+    };
+    const table = {
+      kind: 'table' as const,
+      columns: [
+        { key: 'source', label: 'Source' },
+        { key: 'sub', label: 'Sub items' },
+      ],
+      rows: [[{ kind: 'text' as const, value: 'lodash' }, subItems]],
+    };
+    const entry = dualReport([table], [{ ...table }]).sections[0]?.entries[0];
+    const block = entry?.evidence[0]?.block;
+
+    if (block?.kind !== 'table') throw new Error('expected one table');
+    expect(block.rows).toEqual([
+      [{ kind: 'text', value: 'lodash' }, subItems],
+      [{ kind: 'text', value: 'lodash' }, subItems],
+    ]);
+    expect(block.rowFormFactors).toEqual([['desktop'], ['mobile']]);
+  });
+
+  it('merges a table’s rows, keeping a same-key row twice when its values differ', () => {
+    const columns = [
+      { key: 'url', label: 'URL' },
+      { key: 'size', label: 'Size' },
+    ];
+    const row = (url: string, size: string) => [
+      { kind: 'text' as const, value: url },
+      { kind: 'text' as const, value: size },
+    ];
+    const entry = dualReport(
+      [
+        {
+          kind: 'table',
+          columns,
+          rows: [row('https://a.example/a.js', '120 KB'), row('https://a.example/b.js', '10 KB')],
+        },
+      ],
+      [
+        {
+          kind: 'table',
+          columns,
+          rows: [row('https://a.example/a.js', '80 KB'), row('https://a.example/c.js', '5 KB')],
+        },
+      ],
+    ).sections[0]?.entries[0];
+
+    expect(entry?.evidence[0]).toEqual({
+      formFactors: ['desktop', 'mobile'],
+      block: {
+        kind: 'table',
+        columns,
+        rows: [
+          row('https://a.example/a.js', '120 KB'),
+          row('https://a.example/a.js', '80 KB'),
+          row('https://a.example/b.js', '10 KB'),
+          row('https://a.example/c.js', '5 KB'),
+        ],
+        rowFormFactors: [['desktop'], ['mobile'], ['desktop'], ['mobile']],
+      },
+    });
+  });
+
+  it('keeps one table per device when the columns differ', () => {
+    const desktopTable = {
+      kind: 'table' as const,
+      columns: [{ key: 'url', label: 'URL' }],
+      rows: [[{ kind: 'text' as const, value: 'https://a.example/a.js' }]],
+    };
+    const mobileTable = {
+      kind: 'table' as const,
+      columns: [{ key: 'source', label: 'Source' }],
+      rows: [[{ kind: 'text' as const, value: 'a.js' }]],
+    };
+    const entry = dualReport([desktopTable], [mobileTable]).sections[0]?.entries[0];
+
+    expect(entry?.evidence).toEqual([
+      { formFactors: ['desktop'], block: desktopTable },
+      { formFactors: ['mobile'], block: mobileTable },
+    ]);
+  });
+
+  it('marks a block only one device reported with that device', () => {
+    const entry = dualReport([{ kind: 'text', value: 'Only desktop.' }], []).sections[0]
+      ?.entries[0];
+
+    expect(entry?.evidence).toEqual([
+      { formFactors: ['desktop'], block: { kind: 'text', value: 'Only desktop.' } },
+    ]);
+  });
+
+  it('notes a run that failed while the other succeeded', () => {
+    const report = buildPageAuditReport({
+      ...success,
+      formFactorLabel: 'desktop, mobile',
+      runs: [
+        {
+          formFactor: 'desktop',
+          scores: [{ category: 'seo', score: 80 }],
+          failures: [],
+        },
+        {
+          formFactor: 'mobile',
+          scores: [],
+          failures: [],
+          error: 'The audit did not finish before the deadline',
+        },
+      ],
+    });
+
+    expect(report.note).toContain('mobile');
+    expect(report.note).toContain('deadline');
   });
 });
 
 describe('renderPageAuditSuccess', () => {
-  const success = {
-    ok: true as const,
-    operation: 'page_audit' as const,
+  const success: PageAuditSuccess = {
+    ok: true,
+    operation: 'page_audit',
     requestId: requestIdSchema.parse('req-1'),
     url: 'https://author.example/page.html',
-    formFactor: 'mobile' as PageAuditFormFactor,
-    scores: [{ category: 'seo' as const, score: 75 }],
-    failures: [
+    runs: [
       {
-        category: 'seo' as const,
-        id: 'meta-description',
-        title: 'No meta',
-        score: 0,
-        evidence: [{ kind: 'text', value: 'No meta description.' }],
+        formFactor: 'mobile',
+        scores: [{ category: 'seo', score: 75 }],
+        failures: [
+          {
+            category: 'seo',
+            id: 'meta-description',
+            title: 'No meta',
+            score: 0,
+            evidence: [{ kind: 'text', value: 'No meta description.' }],
+          },
+        ],
       },
     ],
+    formFactorLabel: 'mobile',
     auditedAt: 1,
   };
 
@@ -380,25 +684,31 @@ describe('renderPageAuditSuccess', () => {
   it('renders a failing element and a table row as text the model can reason about', () => {
     const text = renderPageAuditSuccess({
       ...success,
-      failures: [
+      runs: [
         {
-          category: 'performance',
-          id: 'target-size',
-          title: 'Touch targets',
-          score: 0,
-          evidence: [
+          formFactor: 'mobile',
+          scores: [{ category: 'performance', score: 0 }],
+          failures: [
             {
-              kind: 'table',
-              columns: [{ key: 'node', label: 'Failing Elements' }],
-              rows: [
-                [
-                  {
-                    kind: 'selector',
-                    selector: 'h6.txto-title',
-                    snippet: '<h6 class="txto-title">Hi</h6>',
-                    explanation: 'Heading order invalid',
-                  },
-                ],
+              category: 'performance',
+              id: 'target-size',
+              title: 'Touch targets',
+              score: 0,
+              evidence: [
+                {
+                  kind: 'table',
+                  columns: [{ key: 'node', label: 'Failing Elements' }],
+                  rows: [
+                    [
+                      {
+                        kind: 'selector',
+                        selector: 'h6.txto-title',
+                        snippet: '<h6 class="txto-title">Hi</h6>',
+                        explanation: 'Heading order invalid',
+                      },
+                    ],
+                  ],
+                },
               ],
             },
           ],
@@ -413,8 +723,34 @@ describe('renderPageAuditSuccess', () => {
   });
 
   it('is only the head when nothing failed', () => {
-    const text = renderPageAuditSuccess({ ...success, failures: [] });
+    const text = renderPageAuditSuccess({
+      ...success,
+      runs: [{ formFactor: 'mobile', scores: [{ category: 'seo', score: 75 }], failures: [] }],
+    });
 
     expect(text.split('\n')).toHaveLength(1);
+  });
+
+  it('names each device and notes a run that failed', () => {
+    const text = renderPageAuditSuccess({
+      ...success,
+      formFactorLabel: 'desktop, mobile',
+      runs: [
+        {
+          formFactor: 'desktop',
+          scores: [{ category: 'seo', score: 90 }],
+          failures: [],
+        },
+        {
+          formFactor: 'mobile',
+          scores: [],
+          failures: [],
+          error: 'The audit was cancelled',
+        },
+      ],
+    });
+
+    expect(text).toContain('desktop');
+    expect(text).toContain('mobile run failed: The audit was cancelled');
   });
 });

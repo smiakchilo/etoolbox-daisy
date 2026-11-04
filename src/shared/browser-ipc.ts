@@ -294,22 +294,35 @@ export type OpenExternalRequest = Readonly<z.infer<typeof openExternalRequestSch
 
 /**
  * `browser:highlight-element` - a CSS selector naming an element to scroll to
- * and highlight in the browser pane. The selector comes from a report the
- * application painted, never from the model; it is handed
- * to `querySelector` and nowhere else, so an untrusted value cannot run code.
+ * and highlight in the browser pane, plus (optional) the page that selector
+ * belongs to. The selector comes from a report the application painted, never
+ * from the model; it is handed to `querySelector` and nowhere else, so an
+ * untrusted value cannot run code. When `url` is present and the pane is showing
+ * a different document, main reopens that page first - so a selector from a
+ * stored transcript, or one whose page the reader navigated away from, still
+ * lands on the right element.
  */
 export const highlightElementRequestSchema = z
-  .object({ selector: z.string().min(1).max(500) })
+  .object({
+    selector: z.string().min(1).max(500),
+    url: z.string().min(1).max(ADDRESS_MAX_LENGTH).optional(),
+  })
   .strict();
 export type HighlightElementRequest = Readonly<z.infer<typeof highlightElementRequestSchema>>;
 
 /**
  * The outcome of `browser:highlight-element`: `ok` means the command reached the
  * live page; `found` says whether the selector matched an element there (so the
- * pane can note when the audited page has since changed).
+ * pane can note when the audited page has since changed). When `found` is false,
+ * `reason` says whether the audited page could not be reopened at all
+ * (`not-opened`); absent means the selector did not match the page now shown.
  */
 export const highlightElementResultSchema = z
-  .object({ ok: z.literal(true), found: z.boolean() })
+  .object({
+    ok: z.literal(true),
+    found: z.boolean(),
+    reason: z.enum(['not-found', 'not-opened']).optional(),
+  })
   .strict();
 export type HighlightElementResult = Readonly<z.infer<typeof highlightElementResultSchema>>;
 

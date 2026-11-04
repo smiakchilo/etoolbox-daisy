@@ -89,9 +89,11 @@ export function readContributedReport(data: JsonValue | undefined): ToolReportMe
   const sections = report['sections'];
   if (!Array.isArray(sections)) return undefined;
   const summary = report['summary'];
+  const url = report['url'];
   return {
     summary:
       summary === undefined ? undefined : (summary as unknown as ToolReportMessage['summary']),
+    ...(typeof url === 'string' && url !== '' ? { url } : {}),
     sections: sections as unknown as ToolReportMessage['sections'],
   };
 }

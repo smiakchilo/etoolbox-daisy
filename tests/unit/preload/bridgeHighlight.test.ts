@@ -56,4 +56,28 @@ describe('performBridgeHighlight', () => {
     expect((doc.querySelector('#a') as HTMLElement).style.outline).toBe('');
     expect((doc.querySelector('#b') as HTMLElement).style.outline).toContain('solid');
   });
+
+  it('refuses a document that is not the page the report was about', () => {
+    const other = new JSDOM('<div id="a"></div>', {
+      url: 'https://author.example/content/a.html',
+    });
+    Object.defineProperty(other.window.HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      writable: true,
+      value: vi.fn(),
+    });
+    try {
+      const doc = other.window.document;
+      expect(performBridgeHighlight('#a', doc, 'https://author.example/content/other.html')).toBe(
+        false,
+      );
+      expect((doc.querySelector('#a') as HTMLElement).style.outline).toBe('');
+      // A trailing hash names the same document; the page is highlighted.
+      expect(performBridgeHighlight('#a', doc, 'https://author.example/content/a.html#frag')).toBe(
+        true,
+      );
+    } finally {
+      other.window.close();
+    }
+  });
 });

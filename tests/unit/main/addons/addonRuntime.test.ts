@@ -289,6 +289,7 @@ describe('createAddonHost', () => {
       paneSession: { partition: 'persist:webview' } as never,
       currentUrl: () => 'https://a.example/',
       isConfiguredOrigin: (origin) => origin === 'https://a.example',
+      hostType: (origin) => (origin === 'https://a.example' ? 'author' : undefined),
       logger: { warn: vi.fn() },
     });
     return { builder: handle, pane: handle.host.sessions.pane() };
@@ -357,6 +358,8 @@ describe('createAddonHost', () => {
 
     expect(builder.host.hosts.isConfiguredOrigin('https://a.example')).toBe(true);
     expect(builder.host.hosts.isConfiguredOrigin('https://b.example')).toBe(false);
+    expect(builder.host.hosts.hostType('https://a.example')).toBe('author');
+    expect(builder.host.hosts.hostType('https://b.example')).toBeUndefined();
     expect(builder.host.pane.currentUrl()).toBe('https://a.example/');
     await expect(builder.host.network.inspectTarget('not a url')).resolves.toMatchObject({
       allowed: false,
@@ -372,6 +375,7 @@ describe('createAddonHost', () => {
       paneSession: {} as never,
       currentUrl: () => undefined,
       isConfiguredOrigin: () => false,
+      hostType: () => undefined,
       logger: { warn },
     });
 

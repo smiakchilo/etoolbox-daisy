@@ -341,7 +341,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     onResume: () => resumeStoppedSession(),
     onCopyTable: (data) => copyTable(data),
     onExportTable: (data) => exportTable(data),
-    onHighlightElement: (selector) => highlightElement(selector),
+    onHighlightElement: (selector, url) => highlightElement(selector, url),
   });
 
   // The standing "no usable agent" prompt, built once and reused: it is the
@@ -1387,13 +1387,22 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
 
   /**
    * Scrolls the browser pane to a report's failing element and outlines it.
-   * When the selector no longer matches the page being shown (the user navigated
-   * away since the audit), a transient status says so rather than doing nothing.
+   * When the report named the page it audited, main reopens that page first if
+   * the pane is showing something else (or the transcript came from a stored
+   * conversation). When the selector still does not match, a transient status
+   * says so rather than doing nothing.
    */
-  function highlightElement(selector: string): void {
-    void window.daisy.browser.highlightElement({ selector }).then((result) => {
-      if (!result.found) statusBanner.showStatus('Element not found on the current page');
-    });
+  function highlightElement(selector: string, url: string | undefined): void {
+    void window.daisy.browser
+      .highlightElement({ selector, ...(url === undefined ? {} : { url }) })
+      .then((result) => {
+        if (result.found) return;
+        statusBanner.showStatus(
+          result.reason === 'not-opened'
+            ? 'The audited page could not be opened'
+            : 'Element not found on the current page',
+        );
+      });
   }
 
   /**

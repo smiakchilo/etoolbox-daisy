@@ -160,6 +160,8 @@ function isEmptyCell(cell: ToolReportCell): boolean {
   switch (cell.kind) {
     case 'text':
       return cell.value === '';
+    case 'status':
+      return cell.value === '';
     case 'selector':
       return cell.selector === '' && (cell.snippet ?? '') === '' && (cell.label ?? '') === '';
     case 'list':
@@ -171,6 +173,8 @@ function isEmptyCell(cell: ToolReportCell): boolean {
 function textOfCell(cell: ToolReportCell): string {
   switch (cell.kind) {
     case 'text':
+      return cell.value;
+    case 'status':
       return cell.value;
     case 'selector':
       return unique([cell.label, cell.selector, cell.snippet, cell.explanation]).join(' — ');

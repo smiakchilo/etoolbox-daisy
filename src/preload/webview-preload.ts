@@ -131,7 +131,7 @@ ipcRenderer.on(WEBVIEW_BRIDGE_HIGHLIGHT_CHANNEL, (_event, rawCommand: unknown) =
   if (!parsed.success) return;
   let found = false;
   try {
-    found = performBridgeHighlight(parsed.data.selector, window.document);
+    found = performBridgeHighlight(parsed.data.selector, window.document, parsed.data.url);
   } catch {
     // The document could not be decorated; `found` stays false.
   }

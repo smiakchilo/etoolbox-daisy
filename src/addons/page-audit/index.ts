@@ -17,7 +17,7 @@ import { createPageAuditToolFactory } from './tool';
  */
 
 /** The API version this build implements; the application accepts only its own. */
-export const apiVersion = 1;
+export const apiVersion = 2;
 
 export const addon: AddonModule<BrowserWindow, Session> = {
   apiVersion,

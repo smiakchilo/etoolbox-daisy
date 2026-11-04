@@ -1,5 +1,5 @@
-import type { ToolDescriptor, ToolExecutor } from '../tools';
-import type { ToolHost } from '../tools';
+import type { HostType } from '../contracts';
+import type { ToolDescriptor, ToolExecutor, ToolHost } from '../tools';
 
 /**
  * The interface between the application and an add-on: the two things the
@@ -17,9 +17,10 @@ import type { ToolHost } from '../tools';
  * with `import type`, and this module stays free of Electron.
  *
  * Any change to this interface's shape bumps {@link ADDON_API_VERSION}: an
- * add-on may only run against the host it was written for.
+ * add-on may only run against the host it was written for. Version 2 added
+ * {@link AddonHost.hosts.hostType}.
  */
-export const ADDON_API_VERSION = 1;
+export const ADDON_API_VERSION = 2;
 
 /** What one contributed tool's factory receives, and what it must return. */
 export type AddonToolFactory = (toolHost: ToolHost, descriptor: ToolDescriptor) => ToolExecutor;
@@ -98,7 +99,16 @@ export interface AddonHost<TWindow, TSession> {
      */
     inspectTarget(url: string): Promise<NetworkTargetVerdict>;
   };
-  readonly hosts: { isConfiguredOrigin(origin: string): boolean };
+  readonly hosts: {
+    isConfiguredOrigin(origin: string): boolean;
+    /**
+     * The role the Settings "Hosts" tab gives a configured host (`author`,
+     * `publish`), or `undefined` for a host that names none ("(Default)") or for
+     * an origin that is not configured. An add-on may adapt its own behaviour to
+     * the role; the application never acts on it itself.
+     */
+    hostType(origin: string): HostType | undefined;
+  };
   readonly pane: { currentUrl(): string | undefined };
   /** One diagnostics line. The application owns the code, its fields and its file. */
   log(event: AddonLogEvent): void;

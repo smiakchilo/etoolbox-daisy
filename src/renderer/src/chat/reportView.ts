@@ -2,6 +2,8 @@ import type {
   ToolReportBlock,
   ToolReportCell,
   ToolReportEntry,
+  ToolReportEvidence,
+  ToolReportFormFactor,
   ToolReportMessage,
   ToolReportSection,
   ToolReportTreeNode,
@@ -69,6 +71,13 @@ const RUBRIC_BODY_ATTR = 'data-report-rubric-body';
 const ENTRY_ATTR = 'data-report-entry';
 /** The attribute holding an entry's id on its **body**. */
 const ENTRY_BODY_ATTR = 'data-report-entry-body';
+/**
+ * The attribute holding the report's page URL on its **shell** (set by
+ * `transcriptView.ts` from {@link ToolReportMessage.url}). A selector link reads
+ * it to reopen the audited page before highlighting, so a stored report's
+ * selector still lands on the right document.
+ */
+export const REPORT_URL_ATTR = 'data-daisy-report-url';
 
 function formatMs(value: number): string {
   return `${String(Math.round(value))} ms`;
@@ -85,6 +94,8 @@ function formatBytes(value: number): string {
 function cellText(cell: ToolReportCell): string {
   switch (cell.kind) {
     case 'text':
+      return cell.value;
+    case 'status':
       return cell.value;
     case 'selector':
       return [cell.label, cell.selector, cell.snippet, cell.explanation]
@@ -169,13 +180,16 @@ function renderCell(
   if (columnKind === 'status') {
     const text = cellText(cell);
     if (text.trim() === '') return { nodes: [], linkState: state };
+    // A cell may state its own colour (a score with its pass/warn/fail light);
+    // otherwise the word in it decides.
+    const variant = cell.kind === 'status' ? cell.variant : statusLightVariant(text);
     return {
       nodes: [
         el('sp-status-light', {
           attrs: {
             class: 'chat-report-table__status',
             size: 's',
-            variant: statusLightVariant(text),
+            variant,
           },
           text,
         }),
@@ -185,6 +199,10 @@ function renderCell(
   }
   switch (cell.kind) {
     case 'text':
+      return renderText(cell.value, header, context, state);
+    case 'status':
+      // A status cell in a text column reads as its value; only a `status`
+      // column draws the light (see above).
       return renderText(cell.value, header, context, state);
     case 'selector':
       return { nodes: [renderSelector(cell)], linkState: state };
@@ -206,11 +224,18 @@ function renderCell(
   }
 }
 
-/** One report table block: an `sp-table` over its typed rows, with a leading `#` index. */
+/**
+ * One report table block: an `sp-table` over its typed rows, with a leading `#`
+ * index and - for an entry's evidence - a narrow Device column right after it.
+ * The cell shows the device icons; Copy/Export carries the same mark as text
+ * (`desktop`, `mobile`, `desktop, mobile`). A row's mark comes from
+ * `block.rowFormFactors` (a merged table), else the evidence's own form factors.
+ */
 function renderTableBlock(
   block: Extract<ToolReportBlock, { kind: 'table' }>,
   context: LinkContext,
   tables: TableSink,
+  evidence?: ToolReportEvidence,
 ): HTMLElement {
   // A table block is a `chat-table-message` shell (the same class a
   // `format_table` run renders), so the shared gutter (`tableHover.ts`) gives it
@@ -218,12 +243,20 @@ function renderTableBlock(
   // gutter's "table-only message" test passes.
   const shell = el('div', { attrs: { class: 'chat-table-message chat-report-table' } });
   const kinds = block.columns.map((column) => column.kind ?? 'text');
+  const withDevice = evidence !== undefined;
+  const deviceFor = (index: number): readonly ToolReportFormFactor[] =>
+    block.rowFormFactors?.[index] ?? evidence?.formFactors ?? [];
   if (block.title !== undefined) {
     shell.append(el('p', { attrs: { class: 'chat-table-message__title' }, text: block.title }));
   }
   if (block.rows.length > 0) {
     const head = el('sp-table-head', {});
     head.append(el('sp-table-head-cell', { text: '#' }));
+    if (withDevice) {
+      head.append(
+        el('sp-table-head-cell', { attrs: { class: 'chat-report-table__device' }, text: 'Device' }),
+      );
+    }
     for (const column of block.columns) {
       head.append(el('sp-table-head-cell', { text: column.label }));
     }
@@ -237,6 +270,11 @@ function renderTableBlock(
           text: String(index + 1),
         }),
       );
+      if (withDevice) {
+        const device = el('sp-table-cell', { attrs: { class: 'chat-report-table__device' } });
+        device.append(renderDeviceBadges(deviceFor(index)));
+        rowEl.append(device);
+      }
       block.columns.forEach((column, columnIndex) => {
         const cell = el('sp-table-cell', {});
         const rendered = renderCell(
@@ -259,10 +297,15 @@ function renderTableBlock(
   tables.push({
     shell,
     data: {
-      columns: block.columns.map((column) => column.label),
-      rows: block.rows.map((row) =>
-        block.columns.map((_, index) => cellText(row[index] ?? { kind: 'text', value: '' })),
-      ),
+      columns: withDevice
+        ? ['Device', ...block.columns.map((column) => column.label)]
+        : block.columns.map((column) => column.label),
+      rows: block.rows.map((row, index) => {
+        const cells = block.columns.map((_, columnIndex) =>
+          cellText(row[columnIndex] ?? { kind: 'text', value: '' }),
+        );
+        return withDevice ? [deviceText(deviceFor(index)), ...cells] : cells;
+      }),
       total: undefined,
     },
   });
@@ -415,6 +458,67 @@ function renderBlock(block: ToolReportBlock, context: LinkContext, tables: Table
   }
 }
 
+/** The badge each device wears above its half of a finding. */
+const FORM_FACTOR_BADGES: Readonly<
+  Record<ToolReportFormFactor, { icon: keyof HTMLElementTagNameMap; label: string }>
+> = {
+  desktop: { icon: 'sp-icon-device-desktop', label: 'Desktop' },
+  mobile: { icon: 'sp-icon-device-phone', label: 'Mobile' },
+};
+
+/** The device icons for one mark, inline; `aria-label` carries the words. */
+function renderDeviceBadges(formFactors: readonly ToolReportFormFactor[]): HTMLElement {
+  const badge = el('span', {
+    attrs: {
+      class: 'chat-report-device-badges',
+      role: 'img',
+      'aria-label': formFactors
+        .map((formFactor) => FORM_FACTOR_BADGES[formFactor].label)
+        .join(' and '),
+    },
+  });
+  for (const formFactor of formFactors) {
+    badge.append(
+      el(FORM_FACTOR_BADGES[formFactor].icon, {
+        attrs: { class: 'chat-report-device-badge', size: 's' },
+      }),
+    );
+  }
+  return badge;
+}
+
+/** A row's device mark as Copy/Export text. */
+function deviceText(formFactors: readonly ToolReportFormFactor[]): string {
+  return formFactors
+    .map((formFactor) => FORM_FACTOR_BADGES[formFactor].label.toLowerCase())
+    .join(', ');
+}
+
+/**
+ * One evidence block. A table carries its own Device column; prose gets the
+ * device badge(s) inline; an element, checklist or tree gets a badge line above.
+ */
+function renderEvidence(
+  evidence: ToolReportEvidence,
+  context: LinkContext,
+  tables: TableSink,
+): HTMLElement {
+  if (evidence.block.kind === 'table') {
+    return renderTableBlock(evidence.block, context, tables, evidence);
+  }
+  if (evidence.block.kind === 'text') {
+    const rendered = renderText(evidence.block.value, '', context, EMPTY_AEM_LINKIFY_STATE);
+    return el('p', {
+      attrs: { class: 'chat-report-text' },
+      children: [renderDeviceBadges(evidence.formFactors), ...rendered.nodes],
+    });
+  }
+  const shell = el('div', { attrs: { class: 'chat-report-evidence' } });
+  shell.append(renderDeviceBadges(evidence.formFactors));
+  shell.append(renderBlock(evidence.block, context, tables));
+  return shell;
+}
+
 function renderEntry(entry: ToolReportEntry, context: LinkContext, tables: TableSink): HTMLElement {
   const shell = el('div', { attrs: { class: 'chat-report-entry' } });
   const toggle = el('button', {
@@ -438,8 +542,11 @@ function renderEntry(entry: ToolReportEntry, context: LinkContext, tables: Table
   const body = el('div', {
     attrs: { class: 'chat-report-entry__body', [ENTRY_BODY_ATTR]: entry.id, hidden: '' },
   });
-  for (const block of entry.blocks) {
-    body.append(renderBlock(block, context, tables));
+  // A report stored before evidence merging carried `halves`; paint no evidence
+  // for such a transcript rather than throw on the missing list.
+  const evidence = entry.evidence ?? [];
+  for (const item of evidence) {
+    body.append(renderEvidence(item, context, tables));
   }
   shell.append(toggle, body);
   return shell;
@@ -493,6 +600,9 @@ export function renderReportMessage(
   const tables: TableSink = [];
   if (message.summary !== undefined) {
     nodes.push(renderTableBlock(message.summary, context, tables));
+  }
+  if (message.note !== undefined) {
+    nodes.push(el('p', { attrs: { class: 'chat-report-note' }, text: message.note }));
   }
   for (const section of message.sections) {
     nodes.push(renderSection(section, context, tables));

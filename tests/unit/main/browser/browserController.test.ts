@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-import { app, type BrowserWindow, type Session, type WebContents } from 'electron';
+import { app, ipcMain, type BrowserWindow, type Session, type WebContents } from 'electron';
 import { createBrowserController } from '../../../../src/main/browser/browserController';
 import type { BrowsingDataStorage } from '../../../../src/main/browser/browsingData';
 import { describeNetworkError } from '../../../../src/main/browser/networkErrorCopy';
@@ -24,6 +24,10 @@ import {
   BROWSER_FIND_RESULT_CHANNEL,
   BROWSER_SWITCH_STATE_CHANGED_CHANNEL,
 } from '../../../../src/shared';
+import {
+  WEBVIEW_BRIDGE_HIGHLIGHT_CHANNEL,
+  WEBVIEW_BRIDGE_HIGHLIGHT_REPLY_CHANNEL,
+} from '../../../../src/shared/contracts/webviewBridge';
 import { issueUntrustedLeafCert } from '../../../integration/support/testCa';
 import { makeAuthorServer } from '../../../support/configFixtures';
 import { makeInput } from '../../../support/electronInput';
@@ -1571,6 +1575,82 @@ describe('browserController.openForAgent', () => {
 
     expect(result).toEqual({ kind: 'cancelled' });
     expect(changes).toContainEqual({ initiator: 'user' });
+  });
+});
+
+describe('browserController.highlightElement', () => {
+  const AUDITED = 'https://author.example/content/a.html';
+
+  /** A controller whose pane reports `currentUrl`, with the highlight channel captured. */
+  async function highlightHarness(currentUrl: string, url: string) {
+    const server = makeServer();
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithOneServer(server));
+    harness.hostViewControls.setNavigationUrl(currentUrl);
+    harness.hostViewControls.webContents.define('id', 7);
+    const send = vi.fn();
+    harness.hostViewControls.webContents.define('send', send);
+
+    const pending = harness.controller.highlightElement({ selector: 'h4.card__title', url });
+
+    /** Answers the command the preload would answer, so the watchdog never fires. */
+    function answer(found: boolean): void {
+      const registered = vi
+        .mocked(ipcMain)
+        .on.mock.calls.filter(([channel]) => channel === WEBVIEW_BRIDGE_HIGHLIGHT_REPLY_CHANNEL)
+        .at(-1)?.[1] as ((event: object, reply: unknown) => void) | undefined;
+      const command = send.mock.calls
+        .filter(([channel]) => channel === WEBVIEW_BRIDGE_HIGHLIGHT_CHANNEL)
+        .at(-1)?.[1] as { requestId: string } | undefined;
+      if (registered === undefined || command === undefined) {
+        throw new Error('the highlight command was not sent');
+      }
+      registered({ sender: { id: 7 } }, { requestId: command.requestId, found });
+    }
+
+    return { harness, send, pending, answer };
+  }
+
+  it('reopens the audited page before highlighting when the pane is elsewhere', async () => {
+    const { harness, send, pending, answer } = await highlightHarness(
+      'https://author.example/content/other.html',
+      AUDITED,
+    );
+
+    await vi.waitFor(() => expect(harness.hostViewControls.loadURL).toHaveBeenCalledWith(AUDITED));
+    await vi.waitFor(() =>
+      expect(send).toHaveBeenCalledWith(
+        WEBVIEW_BRIDGE_HIGHLIGHT_CHANNEL,
+        expect.objectContaining({ selector: 'h4.card__title', url: AUDITED }),
+      ),
+    );
+    answer(true);
+    await expect(pending).resolves.toEqual({ ok: true, found: true });
+  });
+
+  it('highlights in place when the pane already shows the audited page, even with a fragment', async () => {
+    const { harness, send, pending, answer } = await highlightHarness(`${AUDITED}#frag`, AUDITED);
+
+    await vi.waitFor(() => expect(send).toHaveBeenCalled());
+    expect(harness.hostViewControls.loadURL).not.toHaveBeenCalled();
+    answer(true);
+    await expect(pending).resolves.toEqual({ ok: true, found: true });
+  });
+
+  it('reports that the audited page could not be opened when its host is gone', async () => {
+    const server = makeServer();
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithOneServer(server));
+    harness.hostViewControls.setNavigationUrl('https://author.example/content/other.html');
+    harness.hostViewControls.webContents.define('send', vi.fn());
+
+    const result = await harness.controller.highlightElement({
+      selector: 'h4.card__title',
+      url: 'https://gone.example/content/a.html',
+    });
+
+    expect(result).toEqual({ ok: true, found: false, reason: 'not-opened' });
+    expect(harness.hostViewControls.loadURL).not.toHaveBeenCalled();
   });
 });
 

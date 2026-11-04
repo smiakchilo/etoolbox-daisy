@@ -2,7 +2,7 @@
 name: check-page
 description: MANDATORY for any request to audit, check, test or score a page - performance, accessibility, best practices, SEO - including "check the page performance", "accessibility score of this page", "SEO audit of <url>", "run lighthouse" and `/check-page <url>`. Load this skill BEFORE calling page_audit - it holds the one-call procedure, and page_audit paints the whole report itself, the scores and, for every issue, the evidence Lighthouse found. The scores always come from that tool, never from your own estimate.
 metadata:
-  user-description: Audit a page with Lighthouse for performance, accessibility and SEO
+  user-description: Audit a page for performance, accessibility and SEO
 table-only: true
 ---
 
@@ -14,17 +14,20 @@ the categories ("accessibility only") or a mobile run.
 ## Procedure
 
 1. Call `page_audit` **once**. Pass `url` only when the user gave one. Pass `categories`
-   only when the user narrowed them, and `formFactor: "mobile"` only when they asked for a
-   mobile run. Do not retry a successful audit.
+   only when the user narrowed them. Leave `formFactor` out so the page is measured on
+   **both desktop and mobile**; pass `"desktop"` or `"mobile"` only when the user named one
+   device. Do not retry a successful audit.
 2. If the call fails with `select_server`, ask the user to open a page or pick a host and
    stop. Any other failure is reported in one sentence with the tool's own reason.
 3. Add nothing. `page_audit` puts the whole report on screen itself, as one structured
-   message: the category scores, then one collapsible section per category holding each
-   issue - every failed audit, and every performance insight Lighthouse measured a saving
-   for - with the evidence it found: the failing elements with their selector and
-   snippet, the insecure URLs, the deprecated APIs and where they are called, the console
-   messages. Do not call `format_table`, do not repeat a score, an audit or a row, and
-   write no summary or list around the report.
+   message: one score table with a column per measured device, then one collapsible section
+   per category holding each issue - every failed audit, and every performance insight
+   Lighthouse measured a saving for. An issue found on both devices is one entry with a
+   desktop block and a mobile block; a device-only issue is badged. Each block carries the
+   evidence the run found: the failing elements with their selector and snippet, the
+   insecure URLs, the deprecated APIs and where they are called, the console messages. Do
+   not call `format_table`, do not repeat a score, an audit or a row, and write no summary
+   or list around the report.
 
 ## Discussing a failure
 

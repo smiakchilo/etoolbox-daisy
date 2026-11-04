@@ -45,6 +45,7 @@ export function createAppAddonLoader(options: AppAddonLoaderOptions): AddonLoade
         paneSession: options.paneSession,
         currentUrl: options.currentUrl,
         isConfiguredOrigin: options.isConfiguredOrigin,
+        hostType: options.hostType,
         logger: options.logger,
       }),
   });

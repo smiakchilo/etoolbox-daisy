@@ -1,9 +1,11 @@
+import type { ToolStatusVariant } from '../../../shared';
+
 /**
  * The Spectrum status-light variant a `status` table cell wears, chosen from the
  * cell's own text. The text always stays in the cell (so Copy and Export carry
  * it); the colour is only a reinforcement, and an unrecognised word is neutral.
  */
-export type StatusLightVariant = 'positive' | 'notice' | 'negative' | 'info' | 'neutral';
+export type StatusLightVariant = ToolStatusVariant;
 
 const POSITIVE = new Set(['pass', 'passed', 'ok', 'good', 'success', 'succeeded', 'yes', 'valid']);
 const NOTICE = new Set(['warn', 'warning', 'average', 'partial', 'needs improvement', 'slow']);

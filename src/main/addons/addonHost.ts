@@ -1,5 +1,5 @@
 import { BrowserWindow, type Session, session as electronSession } from 'electron';
-import type { AddonHost, AddonLogEvent, NetworkTargetVerdict } from '../../shared';
+import type { AddonHost, AddonLogEvent, HostType, NetworkTargetVerdict } from '../../shared';
 import { defaultResolve, inspectTarget } from '../externalFetch';
 import type { Logger } from '../logger';
 
@@ -30,6 +30,8 @@ export interface AddonHostDeps {
   readonly paneSession: Session;
   readonly currentUrl: () => string | undefined;
   readonly isConfiguredOrigin: (origin: string) => boolean;
+  /** The role a configured host names in Settings, or `undefined` for "(Default)". */
+  readonly hostType: (origin: string) => HostType | undefined;
   readonly logger: Pick<Logger, 'warn'>;
 }
 
@@ -98,6 +100,7 @@ export function createAddonHost(id: string, deps: AddonHostDeps): AddonHostHandl
     },
     hosts: {
       isConfiguredOrigin: (origin) => deps.isConfiguredOrigin(origin),
+      hostType: (origin) => deps.hostType(origin),
     },
     pane: { currentUrl: () => deps.currentUrl() },
     log(event: AddonLogEvent) {

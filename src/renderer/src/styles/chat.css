@@ -700,6 +700,32 @@
   padding-inline-start: var(--chat-report-indent);
 }
 
+/* The device badge(s) that mark a merged evidence block: one icon for a
+   device-only finding, both for one both devices reported. A table marks each
+   row in its own Device column instead. */
+.chat-report-device-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-inline-end: 6px;
+  vertical-align: middle;
+  color: var(--spectrum-gray-600, #6e6e6e);
+}
+
+.chat-report-evidence {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* A short note under the summary (e.g. one run of a dual measurement that could
+   not complete). */
+.chat-report-note {
+  margin: 0;
+  color: var(--spectrum-gray-700, #4b4b4b);
+  font-size: 13px;
+}
+
 /* The author-origin `display: flex` above outranks the UA `[hidden]` rule, so a
    collapsed section/entry would stay visible without these explicit rules (the
    same pattern as `.chat-tool-call__params[hidden]` and `.chat-message--thinking`);
@@ -737,6 +763,19 @@
 
 .chat-report-table__status {
   white-space: nowrap;
+}
+
+/* The narrow Device column right after the `#`: the row's device icon(s) on
+   screen, and the same mark as text in Copy/Export. */
+.chat-report-table__device {
+  flex: 0 0 2.5rem;
+  padding-inline: 4px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.chat-report-table__device .chat-report-device-badges {
+  margin-inline-end: 0;
 }
 
 /* A failing element's parts: label, the clickable selector, the raw HTML as a

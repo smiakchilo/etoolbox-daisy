@@ -503,6 +503,36 @@ describe('linkTargets - absolute URLs', () => {
     ]);
   });
 
+  it('keeps a trailing :line:column out of the link, as plain text', () => {
+    expect(segments('See https://example.com/a.js:1:24540 now')).toEqual([
+      { kind: 'text', value: 'See ' },
+      {
+        kind: 'link',
+        value: 'https://example.com/a.js',
+        resolved: { openIn: 'external', href: 'https://example.com/a.js', actions: [] },
+        navigable: true,
+      },
+      { kind: 'text', value: ':1:24540 now' },
+    ]);
+  });
+
+  it('does not mistake a port for a source location', () => {
+    expect(segments('See https://example.com:4502/x now')).toEqual([
+      { kind: 'text', value: 'See ' },
+      {
+        kind: 'link',
+        value: 'https://example.com:4502/x',
+        resolved: {
+          openIn: 'external',
+          href: 'https://example.com:4502/x',
+          actions: [],
+        },
+        navigable: true,
+      },
+      { kind: 'text', value: ' now' },
+    ]);
+  });
+
   it('does not make a URL the carry-over for a later page-relative path', () => {
     const result = splitAemPathLinks('https://example.com/x jcr:content/y', activeContext);
     expect(result.state).toEqual({ lastFullPath: undefined });

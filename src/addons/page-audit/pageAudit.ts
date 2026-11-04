@@ -6,6 +6,7 @@ import type {
   PageAuditCategory,
   PageAuditFailed,
   PageAuditFailure,
+  PageAuditFormFactor,
   PageAuditOutcome,
   PageAuditRequest,
   PageAuditRunner,
@@ -78,6 +79,25 @@ export function parseTarget(
   if (candidate.username !== '' || candidate.password !== '') return undefined;
   candidate.hash = '';
   return candidate;
+}
+
+/**
+ * The URL the audit actually loads. AEM's authoring UI renders its own toolbars
+ * and component chrome into the page, which Lighthouse would audit and report as
+ * page problems; on a host Settings names **Author**, the audit therefore asks
+ * for the page's web-content view (`wcmmode=disabled`), exactly as the editor
+ * toggle's long press does. Any `wcmmode` the URL already carries is replaced;
+ * every other query parameter is preserved. A publish host, a "(Default)" host
+ * and an outside URL are left untouched.
+ */
+export function auditTargetUrl(
+  target: URL,
+  host: Pick<AddonHost<BrowserWindow, Session>, 'hosts'>,
+): string {
+  if (host.hosts.hostType(target.origin) !== 'author') return target.href;
+  const url = new URL(target.href);
+  url.searchParams.set('wcmmode', 'disabled');
+  return url.href;
 }
 
 /**
@@ -160,6 +180,69 @@ export async function inspectAuditRequest(
     : { allowed: false, reason: 'it is a local or internal address' };
 }
 
+/** The slice of `lighthouse-logger`'s typed event emitter the add-on listens to. */
+interface LighthouseStatusEmitter {
+  on(event: 'status', listener: (payload: readonly unknown[]) => void): void;
+  off(event: 'status', listener: (payload: readonly unknown[]) => void): void;
+}
+
+/**
+ * The short billet line for one `lighthouse-logger` status message, or
+ * `undefined` when the message is not worth showing. Lighthouse runs its audits
+ * **sequentially** and reports each one it starts, so a per-audit title is an
+ * honest, granular progress line - more useful than a made-up "retrieving
+ * performance" (categories are scored only after every audit ran, and one audit
+ * can feed several categories).
+ */
+export function describeLighthouseStatus(
+  message: string,
+  formFactor: PageAuditFormFactor,
+): string | undefined {
+  if (message.startsWith('Auditing: ')) {
+    return `Analyzing ${formFactor} · ${message.slice('Auditing: '.length)}`;
+  }
+  if (message === 'Gather phase' || message.startsWith('Getting artifact:')) {
+    return `Collecting ${formFactor} page data`;
+  }
+  if (message === 'Audit phase' || message === 'Analyzing and running audits...') {
+    return `Analyzing ${formFactor}`;
+  }
+  if (message === 'Generating results...') {
+    return `Scoring ${formFactor}`;
+  }
+  return undefined;
+}
+
+/**
+ * Runs one Lighthouse pass while relaying its own status events to `progress`.
+ * The listener is deduped (a repeated line is not re-sent) and always removed,
+ * and it is the **same** `lighthouse-logger` module Lighthouse emits on: the
+ * add-on declares it, so both resolve one instance.
+ */
+async function withLighthouseProgress<T>(
+  logger: { readonly events: unknown },
+  formFactor: PageAuditFormFactor,
+  progress: ((stage: string) => void) | undefined,
+  run: () => Promise<T>,
+): Promise<T> {
+  const events = logger.events as LighthouseStatusEmitter;
+  let last: string | undefined;
+  const listener = (payload: readonly unknown[]): void => {
+    const message = payload[1];
+    if (typeof message !== 'string') return;
+    const text = describeLighthouseStatus(message, formFactor);
+    if (text === undefined || text === last) return;
+    last = text;
+    progress?.(text);
+  };
+  events.on('status', listener);
+  try {
+    return await run();
+  } finally {
+    events.off('status', listener);
+  }
+}
+
 function sleepUntilAborted(signal: AbortSignal | undefined): Promise<'cancelled'> {
   return new Promise((resolve) => {
     if (signal === undefined) return;
@@ -211,6 +294,9 @@ export function createPageAudit(
     if (outside && !(await host.network.inspectTarget(target.href)).allowed) {
       return { kind: 'blocked', message: 'The address is local, private or internal.' };
     }
+    // The one URL the run loads: an Author host's pages are audited in their
+    // web-content view, so the author's own chrome is never part of the report.
+    const auditedUrl = auditTargetUrl(target, host);
 
     const session = outside ? host.sessions.isolated('anonymous') : host.sessions.pane();
     // An outside audit gets a dedicated session, so every request in it belongs
@@ -306,7 +392,7 @@ export function createPageAudit(
     let transport: DebuggerTransport | undefined;
     let browser: import('puppeteer-core').Browser | undefined;
     const work = (async (): Promise<PageAuditOutcome> => {
-      const url = target.href;
+      const url = auditedUrl;
       let loadTimer: NodeJS.Timeout | undefined;
       try {
         await Promise.race([
@@ -331,10 +417,10 @@ export function createPageAudit(
       }
       const signedOutAfterLoad = signedOut();
       if (signedOutAfterLoad !== undefined) return signedOutAfterLoad;
-      progress?.('Loading tools');
+      progress?.('Loading audit tools');
       const lighthouse = (await import('lighthouse')).default;
       const puppeteer = await import('puppeteer-core');
-      progress?.('Auditing the page');
+      const { default: log } = await import('lighthouse-logger');
       transport = new DebuggerTransport(win.webContents.debugger, {
         title: win.webContents.getTitle(),
         url: win.webContents.getURL(),
@@ -350,11 +436,13 @@ export function createPageAudit(
       const config = desktop
         ? (await import('lighthouse/core/config/desktop-config.js')).default
         : undefined;
-      const result = await lighthouse(
-        win.webContents.getURL(),
-        { output: 'json', logLevel: 'error', onlyCategories: [...request.categories] },
-        config,
-        page,
+      const result = await withLighthouseProgress(log, request.formFactor, progress, () =>
+        lighthouse(
+          win.webContents.getURL(),
+          { output: 'json', logLevel: 'error', onlyCategories: [...request.categories] },
+          config,
+          page,
+        ),
       );
       if (result === undefined)
         return { kind: 'failed', message: 'Lighthouse returned no result.' };
@@ -393,7 +481,7 @@ export function createPageAudit(
       // which request it was - never only "redirected to a local address".
       const refusal = refusals.at(-1);
       if (refusal !== undefined) {
-        const documentRefused = refusals.some((item) => item.url === shortUrl(target.href));
+        const documentRefused = refusals.some((item) => item.url === shortUrl(auditedUrl));
         return {
           kind: documentRefused ? 'blocked' : 'failed',
           message: `A request to ${refusal.url} was refused because ${refusal.reason}`,

@@ -127,7 +127,22 @@ export type ToolReportCell =
       readonly explanation?: string;
     }
   /** Several values in one cell, each drawn as its own paragraph (a table's sub-items). */
-  | { readonly kind: 'list'; readonly items: readonly ToolReportCell[] };
+  | { readonly kind: 'list'; readonly items: readonly ToolReportCell[] }
+  /**
+   * A value drawn as a Spectrum status light, with its colour stated rather than
+   * inferred from the text (a score that carries its own pass/warn/fail colour).
+   */
+  | {
+      readonly kind: 'status';
+      readonly value: string;
+      readonly variant: ToolStatusVariant;
+    };
+
+/** The colour a status light wears - Spectrum's five semantic variants. */
+export type ToolStatusVariant = 'positive' | 'notice' | 'negative' | 'info' | 'neutral';
+
+/** Which device an evidence half was measured on; the report draws its badge. */
+export type ToolReportFormFactor = 'desktop' | 'mobile';
 
 /** How a report table column's cells are drawn. */
 export type ToolReportColumnKind = 'text' | 'status';
@@ -144,6 +159,12 @@ export interface ToolReportTableBlock {
   readonly title?: string;
   readonly columns: readonly ToolReportColumn[];
   readonly rows: readonly (readonly ToolReportCell[])[];
+  /**
+   * Per-row device marks, aligned to `rows`: a row may be desktop-only,
+   * mobile-only, or both. Present on a table merged across devices; absent means
+   * the evidence's own form factors apply to every row.
+   */
+  readonly rowFormFactors?: readonly (readonly ToolReportFormFactor[])[];
 }
 
 export interface ToolReportChecklistBlock {
@@ -189,6 +210,17 @@ export type ToolReportBlock =
   | ToolReportTreeBlock
   | ToolReportTextBlock;
 
+/**
+ * One block of a finding's evidence, with the device(s) that reported it. The
+ * add-on merges coinciding evidence: word-for-word prose or an identical element
+ * appears once with both form factors, and a disagreement appears once per
+ * device.
+ */
+export interface ToolReportEvidence {
+  readonly formFactors: readonly ToolReportFormFactor[];
+  readonly block: ToolReportBlock;
+}
+
 /** One finding under a report section: a second-level, accordion-collapsed entry. */
 export interface ToolReportEntry {
   /** Stable within a report, used for the accordion (e.g. `performance:largest-contentful-paint`). */
@@ -196,7 +228,12 @@ export interface ToolReportEntry {
   readonly title: string;
   readonly displayValue?: string;
   readonly score?: number;
-  readonly blocks: readonly ToolReportBlock[];
+  /**
+   * The finding's evidence, merged across the devices that reported it: a block
+   * both devices reported word for word appears once with both form factors; a
+   * block they disagree on appears once per device.
+   */
+  readonly evidence: readonly ToolReportEvidence[];
 }
 
 /** A report section (a group of findings): a top-level, expanded-by-default heading. */
@@ -213,6 +250,18 @@ export interface ToolReportSection {
 export interface ToolReportMessage {
   /** The always-visible lead: the tool's own summary table, when it has one. */
   readonly summary: ToolReportTableBlock | undefined;
+  /**
+   * The page the report is about, when the tool knows one (e.g. the audited
+   * URL). A failing element's selector link uses it to reopen that page before
+   * highlighting, so a selector from a stored transcript - or one whose page the
+   * reader has since navigated away from - still lands on the right document.
+   */
+  readonly url?: string;
+  /**
+   * A short note shown under the summary (e.g. one run of a dual measurement
+   * that could not complete). The report itself still paints.
+   */
+  readonly note?: string;
   readonly sections: readonly ToolReportSection[];
 }
 

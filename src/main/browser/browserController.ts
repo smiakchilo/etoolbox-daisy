@@ -650,25 +650,66 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   };
   ipcMain.on(WEBVIEW_BRIDGE_HIGHLIGHT_REPLY_CHANNEL, highlightReplyListener);
 
-  function highlightElement(request: HighlightElementRequest): Promise<HighlightElementResult> {
-    const contents = hostView.webContents;
-    if (contents.isDestroyed()) {
-      return Promise.resolve({ ok: true, found: false });
+  /** Whether the pane already shows `url`, ignoring a trailing hash. */
+  function showsSameDocument(current: string | undefined, url: string): boolean {
+    if (current === undefined) return false;
+    try {
+      const a = new URL(current);
+      const b = new URL(url);
+      a.hash = '';
+      b.hash = '';
+      return a.href === b.href;
+    } catch {
+      return false;
     }
-    const requestId = `highlight-${String((highlightCounter += 1))}`;
-    return new Promise<HighlightElementResult>((resolve) => {
+  }
+
+  /** Sends one highlight command to the live document and resolves with whether the selector matched. */
+  function sendHighlightCommand(
+    requestId: string,
+    selector: string,
+    url: string | undefined,
+  ): Promise<boolean> {
+    const contents = hostView.webContents;
+    if (contents.isDestroyed()) return Promise.resolve(false);
+    return new Promise<boolean>((resolve) => {
       // A reply that never arrives (the preload did not load) must not leave the
       // promise pending forever: answer "not found" after a short wait.
       const timer = setTimeout(() => {
-        if (pendingHighlights.delete(requestId)) resolve({ ok: true, found: false });
+        if (pendingHighlights.delete(requestId)) resolve(false);
       }, 2000);
       timer.unref();
       pendingHighlights.set(requestId, (found) => {
         clearTimeout(timer);
-        resolve({ ok: true, found });
+        resolve(found);
       });
-      contents.send(WEBVIEW_BRIDGE_HIGHLIGHT_CHANNEL, { requestId, selector: request.selector });
+      contents.send(WEBVIEW_BRIDGE_HIGHLIGHT_CHANNEL, {
+        requestId,
+        selector,
+        ...(url === undefined ? {} : { url }),
+      });
     });
+  }
+
+  /**
+   * Scrolls the browser pane to a report's failing element and outlines it.
+   * When the report named the page it audited, that page is reopened first if
+   * the pane is showing something else - the reader navigated away, or a stored
+   * transcript is being read - so the selector is matched against the document
+   * it was found in, never whatever happens to be open. The reopen is an
+   * ordinary user navigation (the same as a transcript link), so it also
+   * dismisses any whole-size panel covering the page.
+   */
+  async function highlightElement(
+    request: HighlightElementRequest,
+  ): Promise<HighlightElementResult> {
+    if (request.url !== undefined && !showsSameDocument(currentDocumentUrl(), request.url)) {
+      const opened = await navigate(request.url);
+      if (!opened.ok) return { ok: true, found: false, reason: 'not-opened' };
+    }
+    const requestId = `highlight-${String((highlightCounter += 1))}`;
+    const found = await sendHighlightCommand(requestId, request.selector, request.url);
+    return { ok: true, found };
   }
 
   async function switchServer(

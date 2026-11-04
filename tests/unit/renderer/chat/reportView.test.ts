@@ -52,50 +52,60 @@ const REPORT: ToolReportMessage = {
           id: 'performance:target-size',
           title: 'Touch targets do not have sufficient size or spacing',
           displayValue: '3 failing elements',
-          blocks: [
+          evidence: [
             {
-              kind: 'table',
-              columns: [{ key: 'node', label: 'Failing Elements' }],
-              rows: [
-                [
-                  {
-                    kind: 'selector',
-                    selector: 'div#tile > h6.title',
-                    snippet: '<h6 class="title">Hello</h6>',
-                    label: 'h6',
-                  },
+              formFactors: ['desktop', 'mobile'],
+              block: {
+                kind: 'table',
+                columns: [{ key: 'node', label: 'Failing Elements' }],
+                rows: [
+                  [
+                    {
+                      kind: 'selector',
+                      selector: 'div#tile > h6.title',
+                      snippet: '<h6 class="title">Hello</h6>',
+                      label: 'h6',
+                    },
+                  ],
                 ],
-              ],
+                rowFormFactors: [['desktop', 'mobile']],
+              },
             },
             {
-              kind: 'text',
-              value:
-                'Learn more about the Total Blocking Time metric (https://developer.chrome.com/docs/tbt/).',
+              formFactors: ['desktop', 'mobile'],
+              block: {
+                kind: 'text',
+                value:
+                  'Learn more about the Total Blocking Time metric (https://developer.chrome.com/docs/tbt/).',
+              },
             },
           ],
         },
         {
           id: 'performance:duplicated-js',
           title: 'Duplicated JavaScript',
-          blocks: [
+          evidence: [
             {
-              kind: 'table',
-              columns: [
-                { key: 'source', label: 'Source' },
-                { key: 'sub', label: 'Sub items' },
-              ],
-              rows: [
-                [
-                  { kind: 'text', value: 'lodash' },
-                  {
-                    kind: 'list',
-                    items: [
-                      { kind: 'text', value: 'https://cdn.example/a.js' },
-                      { kind: 'text', value: 'https://cdn.example/b.js' },
-                    ],
-                  },
+              formFactors: ['desktop'],
+              block: {
+                kind: 'table',
+                columns: [
+                  { key: 'source', label: 'Source' },
+                  { key: 'sub', label: 'Sub items' },
                 ],
-              ],
+                rows: [
+                  [
+                    { kind: 'text', value: 'lodash' },
+                    {
+                      kind: 'list',
+                      items: [
+                        { kind: 'text', value: 'https://cdn.example/a.js' },
+                        { kind: 'text', value: 'https://cdn.example/b.js' },
+                      ],
+                    },
+                  ],
+                ],
+              },
             },
           ],
         },
@@ -147,6 +157,25 @@ describe('renderReportMessage', () => {
     expect(container.querySelector('.chat-report-table__status')?.textContent).toBe('warn');
   });
 
+  it('marks each evidence table row in a Device column', () => {
+    const container = renderInto();
+
+    const header = container.querySelector('.chat-report-entry sp-table-head-cell:nth-child(2)');
+    expect(header?.textContent).toBe('Device');
+    // The header wears the same fixed-width class as its cells, so it lines up.
+    expect(header?.classList.contains('chat-report-table__device')).toBe(true);
+    const device = container.querySelector('sp-table-cell.chat-report-table__device');
+    expect(device?.querySelectorAll('.chat-report-device-badge')).toHaveLength(2);
+  });
+
+  it('prepends the device badges inline to merged prose', () => {
+    const container = renderInto();
+
+    const badge = container.querySelector('.chat-report-text .chat-report-device-badges');
+    expect(badge?.getAttribute('aria-label')).toBe('Desktop and Mobile');
+    expect(badge?.querySelectorAll('.chat-report-device-badge')).toHaveLength(2);
+  });
+
   it('linkifies a text block, so its "Learn more" URL is a real anchor', () => {
     const container = renderInto();
 
@@ -160,11 +189,14 @@ describe('renderReportMessage', () => {
   it('reports each table with the data its Copy/Export gutter serializes', () => {
     const rendered = renderReportMessage(REPORT, EMPTY_LINK_CONTEXT);
 
-    const entryTable = rendered.tables.find(
-      (table) => table.data.columns[0] === 'Failing Elements',
+    const entryTable = rendered.tables.find((table) =>
+      table.data.columns.includes('Failing Elements'),
     );
     expect(entryTable).toBeDefined();
-    expect(entryTable?.data.rows[0]?.[0]).toContain('div#tile > h6.title');
+    // The Device column leads the export, then the audit's own columns.
+    expect(entryTable?.data.columns).toEqual(['Device', 'Failing Elements']);
+    expect(entryTable?.data.rows[0]?.[0]).toBe('desktop, mobile');
+    expect(entryTable?.data.rows[0]?.[1]).toContain('div#tile > h6.title');
     // The shell is a `chat-table-message`, the class the shared gutter discovers.
     expect(entryTable?.shell.classList.contains('chat-table-message')).toBe(true);
     expect(entryTable?.shell.querySelector('.chat-table-message__title, sp-table')).not.toBeNull();

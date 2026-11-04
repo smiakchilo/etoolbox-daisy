@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BrowserWindow, Session } from 'electron';
-import type { AddonHiddenWindowOptions, AddonHost } from '../../../shared';
+import type { AddonHiddenWindowOptions, AddonHost, HostType } from '../../../shared';
 import {
+  auditTargetUrl,
   createPageAudit,
+  describeLighthouseStatus,
   inspectAuditRequest,
   lighthouseFailures,
   parseTarget,
@@ -283,6 +285,7 @@ function addonHost(
     readonly paneSession?: unknown;
     readonly isolatedSession?: () => unknown;
     readonly isConfiguredOrigin?: (origin: string) => boolean;
+    readonly hostType?: (origin: string) => HostType | undefined;
     readonly policy?: (url: URL) => Promise<{ allowed: boolean }>;
     readonly log?: () => void;
   },
@@ -302,7 +305,10 @@ function addonHost(
       inspectTarget: (href) =>
         (options.policy ?? (() => Promise.resolve({ allowed: false })))(new URL(href)),
     },
-    hosts: { isConfiguredOrigin: options.isConfiguredOrigin ?? (() => false) },
+    hosts: {
+      isConfiguredOrigin: options.isConfiguredOrigin ?? (() => false),
+      hostType: options.hostType ?? (() => undefined),
+    },
     pane: { currentUrl: () => options.currentUrl },
     log: () => options.log?.(),
   };
@@ -314,7 +320,7 @@ function policyHost(
   policy: (url: URL) => Promise<{ allowed: boolean }>,
 ): Pick<AddonHost<BrowserWindow, Session>, 'hosts' | 'network'> {
   return {
-    hosts: { isConfiguredOrigin },
+    hosts: { isConfiguredOrigin, hostType: () => undefined },
     network: { inspectTarget: (href) => policy(new URL(href)) },
   };
 }
@@ -385,6 +391,72 @@ describe('parseTarget', () => {
     expect(String(parseTarget('https://example.com/p#top', undefined))).toBe(
       'https://example.com/p',
     );
+  });
+});
+
+describe('auditTargetUrl', () => {
+  function hostOf(type: HostType | undefined): Pick<AddonHost<BrowserWindow, Session>, 'hosts'> {
+    return { hosts: { isConfiguredOrigin: () => true, hostType: () => type } };
+  }
+
+  it("asks an Author host for the page's web-content view", () => {
+    expect(auditTargetUrl(new URL('https://author.example/content/a.html'), hostOf('author'))).toBe(
+      'https://author.example/content/a.html?wcmmode=disabled',
+    );
+  });
+
+  it('replaces an existing wcmmode and keeps every other parameter', () => {
+    expect(
+      auditTargetUrl(
+        new URL('https://author.example/content/a.html?wcmmode=edit&a=1'),
+        hostOf('author'),
+      ),
+    ).toBe('https://author.example/content/a.html?wcmmode=disabled&a=1');
+  });
+
+  it('leaves a Publish host untouched', () => {
+    expect(auditTargetUrl(new URL('https://a.example/content/a.html'), hostOf('publish'))).toBe(
+      'https://a.example/content/a.html',
+    );
+  });
+
+  it('leaves a "(Default)" host untouched', () => {
+    expect(auditTargetUrl(new URL('https://a.example/content/a.html'), hostOf(undefined))).toBe(
+      'https://a.example/content/a.html',
+    );
+  });
+});
+
+describe('describeLighthouseStatus', () => {
+  it('turns the per-audit status into a device-prefixed line', () => {
+    expect(describeLighthouseStatus('Auditing: Largest Contentful Paint', 'desktop')).toBe(
+      'Analyzing desktop · Largest Contentful Paint',
+    );
+    expect(describeLighthouseStatus('Auditing: Color contrast', 'mobile')).toBe(
+      'Analyzing mobile · Color contrast',
+    );
+  });
+
+  it('collapses the gather phase and its per-artifact lines into one line', () => {
+    expect(describeLighthouseStatus('Gather phase', 'desktop')).toBe(
+      'Collecting desktop page data',
+    );
+    expect(describeLighthouseStatus('Getting artifact: TraceElements', 'mobile')).toBe(
+      'Collecting mobile page data',
+    );
+  });
+
+  it('names the audit phase and the scoring phase', () => {
+    expect(describeLighthouseStatus('Audit phase', 'desktop')).toBe('Analyzing desktop');
+    expect(describeLighthouseStatus('Analyzing and running audits...', 'mobile')).toBe(
+      'Analyzing mobile',
+    );
+    expect(describeLighthouseStatus('Generating results...', 'desktop')).toBe('Scoring desktop');
+  });
+
+  it('ignores a status the billet has nothing useful to say about', () => {
+    expect(describeLighthouseStatus('Some new Lighthouse status', 'desktop')).toBeUndefined();
+    expect(describeLighthouseStatus('', 'desktop')).toBeUndefined();
   });
 });
 
@@ -735,6 +807,7 @@ describe('createPageAudit', () => {
     probe = session(),
     isConfiguredOrigin: (origin: string) => boolean = () => false,
     inspectTarget = addressPolicy(),
+    hostType: (origin: string) => HostType | undefined = () => undefined,
   ) {
     const windows = createWindowFactory();
     return {
@@ -747,6 +820,7 @@ describe('createPageAudit', () => {
           paneSession: probe,
           isolatedSession: () => probe,
           isConfiguredOrigin,
+          hostType,
           policy: inspectTarget,
         }),
       ),
@@ -792,6 +866,32 @@ describe('createPageAudit', () => {
     expect(window?.webContents.setFrameRate).toHaveBeenCalledWith(30);
     expect(probe.setPermissionCheckHandler).toHaveBeenCalled();
     expect(probe.webRequest.onBeforeRequest).toHaveBeenLastCalledWith(null);
+  });
+
+  it("audits an Author host's page in its web-content view", async () => {
+    let loaded: string | undefined;
+    const { run, windows } = auditRunner(
+      undefined,
+      session(),
+      (origin) => origin === 'https://author.example',
+      addressPolicy(),
+      (origin) => (origin === 'https://author.example' ? 'author' : undefined),
+    );
+    windows.setLoadUrl((url) => {
+      loaded = url;
+      return new Promise<void>(() => undefined);
+    });
+    const controller = new AbortController();
+
+    const outcome = run(
+      { ...request, url: 'https://author.example/content/a.html' },
+      controller.signal,
+    );
+    await vi.waitFor(() => expect(windows.windows).toHaveLength(1));
+    controller.abort();
+
+    await expect(outcome).resolves.toEqual({ kind: 'cancelled' });
+    expect(loaded).toBe('https://author.example/content/a.html?wcmmode=disabled');
   });
 
   it('reports a signed-out session when the page loaded is the host sign-in page', async () => {

@@ -2058,6 +2058,7 @@ describe.skipIf(REPORT_TOOL === undefined)('a contributed report presentation', 
           ],
         ],
       },
+      url: 'https://author.example/content/a.html',
       sections: [
         {
           title: 'Performance',
@@ -2067,24 +2068,27 @@ describe.skipIf(REPORT_TOOL === undefined)('a contributed report presentation', 
               title: 'Largest Contentful Paint',
               score: 33,
               displayValue: '3.0 s',
-              blocks: [
+              evidence: [
                 {
-                  kind: 'table',
-                  columns: [
-                    { key: 'node', label: 'Element' },
-                    { key: 'url', label: 'URL' },
-                  ],
-                  rows: [
-                    [
-                      {
-                        kind: 'selector',
-                        selector: 'h4.card__title',
-                        snippet: '<h4 class="card__title">Hi</h4>',
-                        label: 'h4',
-                      },
-                      { kind: 'text', value: 'https://cdn.example/x.css' },
+                  formFactors: ['desktop'],
+                  block: {
+                    kind: 'table',
+                    columns: [
+                      { key: 'node', label: 'Element' },
+                      { key: 'url', label: 'URL' },
                     ],
-                  ],
+                    rows: [
+                      [
+                        {
+                          kind: 'selector',
+                          selector: 'h4.card__title',
+                          snippet: '<h4 class="card__title">Hi</h4>',
+                          label: 'h4',
+                        },
+                        { kind: 'text', value: 'https://cdn.example/x.css' },
+                      ],
+                    ],
+                  },
                 },
               ],
             },
@@ -2189,7 +2193,10 @@ describe.skipIf(REPORT_TOOL === undefined)('a contributed report presentation', 
     expect(selector?.getAttribute('data-daisy-selector')).toBe('h4.card__title');
     clickElement(selector as HTMLElement);
 
-    expect(onHighlightElement).toHaveBeenCalledWith('h4.card__title');
+    expect(onHighlightElement).toHaveBeenCalledWith(
+      'h4.card__title',
+      'https://author.example/content/a.html',
+    );
     // The rubric did not collapse.
     expect(
       view.element.querySelector<HTMLElement>('[data-report-rubric-body]')?.hasAttribute('hidden'),

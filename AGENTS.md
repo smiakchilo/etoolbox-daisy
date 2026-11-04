@@ -1241,22 +1241,49 @@ src/tools/<name>/
   launch and loads the add-on on its first call (`src/main/addons/loader.ts`). Its
   billet comes from the descriptor's `billet` spec; its `presentation: 'report'` result
   carries the report under `data.report`, which the renderer paints generically.
-  **The tool builds the whole report itself**: one score table (`Category`/`Score`/`Status`
-  with the pass ≥ 90 / warn ≥ 50 / fail thresholds), then **one section per category
-  holding a table per issue** - every audit that did not pass, **and every weight-0
-  `informative` insight Lighthouse measured a saving for** (`metricSavings` > 0 ms or
-  `wastedBytes` > 0; Lighthouse 13's performance category weights only its five
-  metrics, so its actionable findings are those insights; a breakdown-only insight that
-  just explains a metric stays out) - carrying Lighthouse's own evidence - the columns
-  from the audit's `details.headings` (a failing element as
-  `nodeLabel — selector — snippet — explanation`, an insecure URL, a
+  **Both form factors by default** (2026-11-04): `formFactor` absent measures desktop
+  then mobile in sequence (`PAGE_AUDIT_RUN_ORDER`, each its own hidden window); a named one
+  measures only that. **The tool builds the whole report itself**: one run leads with the
+  `Category`/`Score`/`Status` table (pass ≥ 90 / warn ≥ 50 / fail), both runs with one
+  `Category`/`Desktop`/`Mobile` table whose score cells are status lights
+  (`scoreVariant`). Then **one section per category, one entry per audit** - every audit
+  that did not pass, **and every weight-0 `informative` insight Lighthouse measured a
+  saving for** (`metricSavings` > 0 ms or `wastedBytes` > 0; Lighthouse 13's performance
+  category weights only its five metrics, so its actionable findings are those insights; a
+  breakdown-only insight that just explains a metric stays out). The same audit id in both
+  runs is **one entry whose evidence is merged** (`ToolReportEntry.evidence`,
+  `ToolReportEvidence`), not two stacked halves: a prose block or element both devices
+  reported word for word appears **once, with both `sp-icon-device-desktop`/
+  `sp-icon-device-phone` badges inline**; one they disagree on appears once per device.
+  An evidence table is one table with a narrow **Device column right after the `#`**
+  (`rowFormFactors`; the cell shows the icons, Copy/Export carries the same mark as text
+  `desktop`/`mobile`/`desktop, mobile`): identical rows are marked both, a row only one
+  device reported is marked that device, and a row the devices disagree on (same first
+  cell - URL/element/source - but different values) is kept **twice**, one per device, so
+  neither value is lost. Different columns fall back to one table per device. A checklist
+  is rendered as an `Item | Result` table (`checklistAsTable`), so its items merge one by
+  one; a table row that carries sub-items keeps one row per device even when the two are
+  identical (`hasSubItems`), because the detail is too rich to collapse. Each block
+  carries Lighthouse's own evidence - the columns from the audit's `details.headings` (a
+  failing element as `nodeLabel — selector — snippet — explanation`, an insecure URL, a
   `url:line:column` source location, a console message, sub-items in their own trailing
   column) - and, for an audit with no items, a single `What to fix` row holding
   Lighthouse's own explanation. Nothing is capped, so the report is the full rundown;
   the same evidence stays in the tool result, so the model can discuss a fix afterwards.
-  The tables are painted by the app, never copied by the model.
+  The tables are painted by the app, never copied by the model. If one run fails while the
+  other succeeds, the report still paints and carries a note naming the failed device
+  (`ToolReportMessage.note`); both failing is a normal tool error. The report carries the
+  audited page as `ToolReportMessage.url`, so a failing element's selector link reopens that
+  page before highlighting - even from a transcript replayed out of an archived journal
+  (`browser:highlight-element` gained an optional `url`, and the preload refuses a document
+  that is not it). A source location an evidence URL carries (`file.js:1:3458`) is stripped
+  from the link target and left as text (`stripSourceLocation` in `linkTargets.ts`), so the
+  link is not broken. On a host Settings names **Author**, the audit loads the page with
+  `wcmmode=disabled` (`auditTargetUrl`) so AEM's authoring chrome is never audited; a
+  publish or "(Default)" host is untouched. Both need `AddonHost.hosts.hostType`
+  (`ADDON_API_VERSION` 2).
   The runner is serialized with at most two waiting (a third is refused as retryable),
-  120 s deadline; a non-configured origin uses an isolated cookie-less session
+  120 s deadline per run (a dual call runs it twice); a non-configured origin uses an isolated cookie-less session
   (`addon-<id>-anonymous`). **Every** audit's requests - a configured host's included -
   are held to `inspectAuditRequest` (its own configured origins trusted,
   `data:`/`blob:`/`about:` local, the rest through the host's address policy) and again
@@ -1270,11 +1297,15 @@ src/tools/<name>/
   security) and for the sessions, the pane URL and the address policy, so the audit's
   window and its network position stay the application's decisions while the hardening
   inside it is the add-on's. The runner takes an optional third `progress` callback that
-  the executor forwards to `reportToolProgress`: the billet reads
-  "Loading tools"
-  while the lazy imports run (the slow first audit), then "Auditing the page". Their
-  results are untrusted page data (`session.md`). Rule 7.4 is unchanged: `method` stays
-  GET/HEAD.
+  the executor forwards to `reportToolProgress`, so the billet shows what is happening:
+  "Analyzing desktop"/"Analyzing mobile" before each pass, "Loading audit tools" while the
+  lazy imports run (the slow first audit), then Lighthouse's own status stream through
+  `lighthouse-logger`'s `'status'` events - "Collecting desktop page data", "Analyzing
+  desktop · <audit title>" per audit (Lighthouse runs them sequentially), "Scoring
+  desktop" - deduped and removed after the pass (`describeLighthouseStatus`). A made-up
+  per-category line is deliberately not used: categories are scored only after every
+  audit ran, and one audit can feed several. The audit's results are untrusted page data
+  (`session.md`). Rule 7.4 is unchanged: `method` stays GET/HEAD.
   **Why Lighthouse and Puppeteer are one add-on** (`lighthouse` 13.5.0,
   `puppeteer-core` 25.16.0, in `src/addons/page-audit/package.json` only): Lighthouse 12+
   has no Chrome driver of its own and takes a Puppeteer `Page`; `puppeteer-core` (no
@@ -1641,7 +1672,9 @@ is resolved at sign-in time by the agent that uses it
 - **The generic host.** A loaded add-on receives an `AddonHost`
   (`src/shared/addons/addonHost.ts`): a hidden window, the sessions
   (`pane()`, and `isolated(name)` → partition `addon-<id>-<name>`), the address
-  policy, the configured origins, the pane URL and one log call. Main forces only
+  policy, the configured origins **and each host's Settings role**
+  (`hostType(origin)` → `author`/`publish`, absent for "(Default)"),
+  the pane URL and one log call. Main forces only
   the safety-critical window options (hidden, sandboxed, context-isolated, no Node
   integration, web security on) and refuses a session it did not hand out;
   **everything else about its window and its network is the add-on's** (frame
@@ -2264,7 +2297,44 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 5068 passed / 13 skipped** (5081 total) - the
+Current baseline: **`npm run test` → 5097 passed / 13 skipped** (5110 total) - the
+suite is fully green here, +29 against the 5068 run below, for **`page_audit`
+measuring both form factors, an Author's web-content view, and selector deep links**
+(2026-11-04): `formFactor` now defaults to *both* (desktop then mobile,
+`PAGE_AUDIT_RUN_ORDER`), and the report merges the same audit id across the two runs
+into one entry whose **evidence is merged** - word-for-word prose or an identical
+element once with both device badges inline, a disagreement once per device; an
+evidence table is one table with a narrow **Device column right after `#`** (icons on
+screen, `desktop`/`mobile`/`desktop, mobile` in Copy/Export), identical rows marked
+both, a same-key row whose values differ kept twice (one per device), different columns
+falling back to one table per device, a **checklist rendered as an `Item | Result`
+table** (`checklistAsTable`), and a row carrying **sub-items kept one per device**
+(`hasSubItems`) because the detail is too rich to collapse. A source location an
+evidence URL carries (`file.js:1:3458`) is stripped from the link target and left as
+text (`stripSourceLocation`), so the link is not broken. The lead table grows a
+`Desktop`/`Mobile` pair of status-light score columns; a run that fails while the other
+succeeds becomes a `ToolReportMessage.note`. On a host Settings names **Author** the
+audit loads `wcmmode=disabled`, so authoring chrome is never measured.
+`ToolReportMessage.url` now carries the audited page, so a failing element's selector
+link reopens it before highlighting (the `browser:highlight-element` request gained an
+optional `url`, and the preload refuses a document that is not it) - including a
+transcript replayed from an archived journal. `AddonHost.hosts.hostType` (and
+`ADDON_API_VERSION` 2) carries the host role to the add-on. The billet's progress now
+comes from Lighthouse's own status stream (`lighthouse-logger`, declared as an add-on
+dependency so both resolve one module instance): "Analyzing desktop"/"Analyzing mobile",
+"Loading audit tools", then "Collecting desktop page data", "Analyzing desktop · <audit
+title>" per audit (Lighthouse runs them sequentially) and "Scoring desktop", deduped and
+torn down after the pass (`describeLighthouseStatus`). The +29 is 5 `pageAudit`, 4
+`describeLighthouseStatus`, 11 `tool` (device columns, the prose/table/checklist merge
+rules, sub-items rows, a partial failure, the dual model text), 1 `contributedTools`
+(the report's page), 3 `browserController` (reopen-then-highlight, in-place, gone
+host), 1 `bridgeHighlight` (the document guard), 2 `reportView` (the Device column and
+the inline prose badges) and 2 `linkTargets` (the source location and the port guard).
+The page-audit E2E is 4/4 against the built app. See
+`docs/verification/followons-2026-10.md` "page_audit: both form factors, an Author's
+web-content view, and selector deep links (2026-11-04)".
+
+Before that it was **`npm run test` → 5068 passed / 13 skipped** (5081 total) - the
 suite is fully green here, +8 against the 5060 run below, for **the agent runtime
 starting after the page instead of during startup** (2026-11-04): the SDK import
 is a synchronous ~0.8-0.9 s main-thread block, and starting it at

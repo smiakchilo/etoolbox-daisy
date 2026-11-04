@@ -31,6 +31,8 @@ import '@spectrum-web-components/icons-workflow/icons/sp-icon-settings.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-padding-right.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-chevron-down.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-edit.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-device-desktop.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-device-phone.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-journey-voyager.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-chevron-up.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-delete-outline.js';
