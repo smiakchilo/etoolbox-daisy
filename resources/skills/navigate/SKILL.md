@@ -7,10 +7,29 @@ metadata:
 
 # Opening a page, asset, or place in the browser pane
 
-Open what the user asked for. The whole job is: work out **which host**, **which page,
-asset or place**, and **which display mode**, then call `browser_navigate`
-**once**. If you cannot determine one of them, say so and ask for a clearer
-instruction - never guess a path or a host.
+**These rules are absolute - do not deviate.**
+
+1. **Search, then navigate - in that order.** For a name (not a path the user
+   literally wrote), you MUST call `aem_query` with a `nodename` predicate and
+   read the `jcr:path` from its result BEFORE you call `browser_navigate`.
+   Never call `browser_navigate` with a path you invented or remembered.
+2. **A name uses `nodename`, never `fulltext`.** The `type` plus the
+   `group.N_nodename` forms in section 3. Never use `fulltext` for a name, and
+   never use `aem_query_format_ask` for one: its `terms` argument *is*
+   full-text.
+3. **Never show a table.** This skill's only outcomes are a `browser_navigate`,
+   an `ask_user` disambiguation question, or a "nothing found" message. Never
+   call `aem_query_format_ask` and never call `format_table`, whatever the
+   `aem_query` tool's own description says about showing results.
+4. **`environment_facts` takes no arguments** - call it with `{}`.
+
+Open what the user asked for. The whole job, in order: **search** for the named
+page or asset with `aem_query` (section 3) - that search is how you learn which
+path to open - then **call `browser_navigate` once** with a `jcr:path` that
+search returned. If the search is ambiguous, `ask_user`; if it finds nothing,
+say so. Never navigate to a path you did not just find in that search. If you
+cannot determine the host or display mode, say so and ask for a clearer
+instruction.
 
 **Words are a name, never a description.** What the user types after "open"
 or "go to" is the **name** of something - match it literally, exactly as
@@ -34,6 +53,15 @@ resembles a path, changes nothing: run the phases and open what they return.
 `/content/<site>/us/en` is a guess, not a home page - and a guessed path is
 wrong as often as it is right.
 
+**The search is invisible - its answer is never a table.** Resolving a name is
+internal work: it tells you *which* path to open or *which* candidates to
+offer, never something to present as a result list. The user only ever sees
+three outcomes - a `browser_navigate`, an `ask_user` disambiguation question,
+or a "nothing found" message. Never call `aem_query_format_ask` and never draw
+a `format_table` table in this skill: `aem_query_format_ask`'s `terms`
+argument is full-text search, which is only ever the last resort below, and
+even then its purpose is to find the path to open - not to show a table.
+
 ## 1. Read the prompt
 
 Split the request into:
@@ -43,9 +71,10 @@ Split the request into:
 
 Test **every qualifier in this exact order**:
 
-1. **Environment reference first.** Call `environment_facts` and match the
-   phrase against the configured hosts - against a host's **label** ("HPE
-   DEV") or its **origin's host and port** ("localhost", "localhost:4502"),
+1. **Environment reference first.** Call `environment_facts` (it takes no
+   arguments) and match the phrase against the configured hosts - against a
+   host's **label** ("HPE DEV") or its **origin's host and port** ("localhost",
+   "localhost:4502"),
    case-insensitively and loosely but unambiguously: the phrase names the
    label, or the host, or a distinctive part of one. Exactly one host
    matches -> that is the environment; remember its **label** to pass as
@@ -164,7 +193,12 @@ home page" is searched as `*home*`, and "Go to elastic browser page" as
 `*elastic*browser*`.
 
 Then run the phases in order, and enter the next phase **only** when the
-current one found nothing. **Pages first** - unless the display mode is
+current one found nothing. The order is strict - **the node name first
+(Phase A), the title second (Phase B), full text last (Phase C)** - and you
+never skip ahead: full text is a last resort reached only when the name and
+title searches both found nothing, because it matches pages that merely
+mention the words. If a search returns thousands of rows, you used the wrong
+phase. **Pages first** - unless the display mode is
 `assets` or `asset_details`, which says the target is an asset and the asset
 phases run first. Whichever set runs first falls through to the other set
 only when its own phases all found nothing.
@@ -194,9 +228,10 @@ context block, or `environment_facts`):
 
 Run it once with no `limit`; do **not** page through it. The first call is
 enough to tell one match from many, and the disambiguation step lists exactly
-the rows this call returned. Never use `fulltext` in Phase A: a full-text
-search finds pages that merely *mention* the words and is not the name search
-the user asked for.
+the rows this call returned. Never use `fulltext` in Phase A, and never call
+`aem_query_format_ask` for a name - its `terms` argument *is* full text: a
+full-text search finds pages that merely *mention* the words and is not the
+name search the user asked for.
 
 **Phase B - the page title** (only when the name found nothing). Search the
 spaced phrase in the title, in the same case forms, ORed over
